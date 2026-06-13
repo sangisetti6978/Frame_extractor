@@ -1,0 +1,16 @@
+{
+  "name": "Video Frame Extractor",
+  "short_name": "Frame Extractor",
+  "description": "Extract frames from videos with auto-capture on pause and blur detection",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    }
+  ]
+}

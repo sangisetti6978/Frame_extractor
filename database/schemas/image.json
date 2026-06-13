@@ -1,0 +1,54 @@
+{
+  "$jsonSchema": {
+    "bsonType": "object",
+    "title": "Captured Image Schema",
+    "required": ["user_id", "image_path", "source_video", "timestamp"],
+    "properties": {
+      "_id": {
+        "bsonType": "objectId"
+      },
+      "user_id": {
+        "bsonType": "objectId",
+        "description": "Reference to User"
+      },
+      "config_id": {
+        "bsonType": "objectId",
+        "description": "Reference to FolderConfig"
+      },
+      "image_path": {
+        "bsonType": "string"
+      },
+      "image_url": {
+        "bsonType": "string"
+      },
+      "source_video": {
+        "bsonType": "string"
+      },
+      "timestamp": {
+        "bsonType": "double",
+        "description": "Timestamp in seconds"
+      },
+      "is_blurred": {
+        "bsonType": "bool",
+        "default": false
+      },
+      "blur_score": {
+        "bsonType": "double",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "file_size": {
+        "bsonType": "long"
+      },
+      "width": {
+        "bsonType": "int"
+      },
+      "height": {
+        "bsonType": "int"
+      },
+      "created_at": {
+        "bsonType": "date"
+      }
+    }
+  }
+}

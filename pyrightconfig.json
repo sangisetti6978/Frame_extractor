@@ -1,0 +1,18 @@
+{
+    "typeCheckingMode": "basic",
+    "pythonVersion": "3.12",
+    "pythonPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+    "include": [
+        "backend"
+    ],
+    "exclude": [],
+    "venvPath": "${workspaceFolder}/.venv",
+    "stubPath": "${workspaceFolder}/.venv/lib/python3.12/site-packages",
+    "defineConstant": {
+        "DEBUG": true
+    },
+    "reportMissingImports": false,
+    "reportMissingTypeStubs": false,
+    "reportUndefinedVariable": false,
+    "reportPrivateUsage": false
+}

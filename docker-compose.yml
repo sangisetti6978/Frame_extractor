@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: video_extractor_mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: video_extractor
+    volumes:
+      - mongodb_data:/data/db
+      - ./database/scripts:/docker-entrypoint-initdb.d
+    networks:
+      - video_extractor_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: video_extractor_backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mongodb
+    environment:
+      DEBUG: 'False'
+      SECRET_KEY: 'your-secret-key'
+      MONGODB_URI: 'mongodb://mongodb:27017/video_extractor'
+      CORS_ALLOWED_ORIGINS: 'http://localhost:5173'
+    volumes:
+      - ./backend/media:/app/media
+    networks:
+      - video_extractor_network
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
+             gunicorn video_extractor.wsgi:application --bind 0.0.0.0:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: video_extractor_frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: 'http://backend:8000/api'
+    networks:
+      - video_extractor_network
+
+volumes:
+  mongodb_data:
+
+networks:
+  video_extractor_network:
+    driver: bridge

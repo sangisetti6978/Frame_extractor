@@ -1,0 +1,46 @@
+{
+  "$jsonSchema": {
+    "bsonType": "object",
+    "title": "Folder Config Schema",
+    "required": ["user_id", "folder_path", "folder_name"],
+    "properties": {
+      "_id": {
+        "bsonType": "objectId"
+      },
+      "user_id": {
+        "bsonType": "objectId",
+        "description": "Reference to User"
+      },
+      "folder_path": {
+        "bsonType": "string"
+      },
+      "folder_name": {
+        "bsonType": "string"
+      },
+      "image_format": {
+        "enum": ["jpg", "png", "webp", "bmp"],
+        "default": "png"
+      },
+      "compression_quality": {
+        "bsonType": "int",
+        "minimum": 0,
+        "maximum": 100,
+        "default": 85
+      },
+      "auto_blur_detection": {
+        "bsonType": "bool",
+        "default": false
+      },
+      "is_active": {
+        "bsonType": "bool",
+        "default": true
+      },
+      "created_at": {
+        "bsonType": "date"
+      },
+      "updated_at": {
+        "bsonType": "date"
+      }
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "$jsonSchema": {
+    "bsonType": "object",
+    "title": "User Schema",
+    "required": ["username", "email", "password"],
+    "properties": {
+      "_id": {
+        "bsonType": "objectId"
+      },
+      "username": {
+        "bsonType": "string",
+        "description": "Unique username"
+      },
+      "email": {
+        "bsonType": "string",
+        "pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+      },
+      "password": {
+        "bsonType": "string",
+        "description": "Hashed password"
+      },
+      "first_name": {
+        "bsonType": "string"
+      },
+      "last_name": {
+        "bsonType": "string"
+      },
+      "phone": {
+        "bsonType": "string"
+      },
+      "avatar_url": {
+        "bsonType": "string"
+      },
+      "is_email_verified": {
+        "bsonType": "bool",
+        "default": false
+      },
+      "created_at": {
+        "bsonType": "date"
+      },
+      "updated_at": {
+        "bsonType": "date"
+      }
+    }
+  }
+}

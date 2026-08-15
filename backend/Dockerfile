@@ -13,11 +13,6 @@ WORKDIR /app
 COPY requirements.txt .
 # Replace opencv-python with opencv-python-headless to avoid X11 dependencies
 RUN sed -i 's/opencv-python==/opencv-python-headless==/' requirements.txt
-# Add gunicorn to requirements
-RUN echo "gunicorn==21.2.0" >> requirements.txt
-# Add whitenoise for static files
-RUN echo "whitenoise==6.6.0" >> requirements.txt
-
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project files

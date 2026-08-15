@@ -28,4 +28,4 @@ ENV DJANGO_SETTINGS_MODULE=video_extractor.settings
 RUN python manage.py collectstatic --noinput
 
 # Run gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "video_extractor.wsgi:application"]
+CMD gunicorn --bind 0.0.0.0:${PORT:-8000} video_extractor.wsgi:application

@@ -18,8 +18,7 @@ RUN npm run build
 FROM nginx:alpine
 # Copy built static files to Nginx HTML directory
 COPY --from=build /app/dist /usr/share/nginx/html
-# Copy custom Nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Copy custom Nginx configuration template
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 
-EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

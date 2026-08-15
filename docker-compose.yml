@@ -1,11 +1,23 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: video_extractor_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME:-auto_frame_db}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - video_extractor_network
+
   mongodb:
     image: mongo:latest
     container_name: video_extractor_mongo
-    ports:
-      - "27017:27017"
+    restart: always
     environment:
       MONGO_INITDB_DATABASE: video_extractor
     volumes:
@@ -19,40 +31,54 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: video_extractor_backend
-    ports:
-      - "8000:8000"
+    restart: always
     depends_on:
+      - postgres
       - mongodb
     environment:
+      # Secrets should be injected via .env on the server
       DEBUG: 'False'
-      SECRET_KEY: 'your-secret-key'
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      ALLOWED_HOSTS: '*' # Nginx will handle host filtering in production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-auto_frame_db}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
       MONGODB_URI: 'mongodb://mongodb:27017/video_extractor'
-      CORS_ALLOWED_ORIGINS: 'http://localhost:5173'
+      # Allow requests from the Nginx proxy (frontend container)
+      CORS_ALLOWED_ORIGINS: 'http://frontend,https://frontend'
     volumes:
-      - ./backend/media:/app/media
+      # Map a persistent volume for processed media files
+      - media_data:/app/media
     networks:
       - video_extractor_network
     command: >
       sh -c "python manage.py migrate &&
              python manage.py collectstatic --noinput &&
-             gunicorn video_extractor.wsgi:application --bind 0.0.0.0:8000"
+             gunicorn video_extractor.wsgi:application --bind 0.0.0.0:8000 --timeout 120"
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Since we use Nginx proxying, API calls can just go to /api
+        VITE_API_URL: '/api'
     container_name: video_extractor_frontend
+    restart: always
     ports:
-      - "5173:5173"
+      # Expose standard HTTP port
+      - "80:80"
     depends_on:
       - backend
-    environment:
-      VITE_API_URL: 'http://backend:8000/api'
     networks:
       - video_extractor_network
 
 volumes:
+  postgres_data:
   mongodb_data:
+  media_data:
 
 networks:
   video_extractor_network:

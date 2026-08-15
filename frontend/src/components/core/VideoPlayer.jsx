@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useContext } from 'react'
 import { ConfigContext } from '../../context/ConfigContext'
+import { Camera, CheckCircle2, Video } from 'lucide-react'
 
-// Browser-native video extensions that don't need transcoding
 const NATIVE_EXTENSIONS = new Set(['.mp4', '.webm', '.ogg', '.ogv'])
 
 function getExtension(filename) {
@@ -16,18 +16,17 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [capturing, setCapturing] = useState(false)
   const [captureSuccess, setCaptureSuccess] = useState(false)
+  const [showFlash, setShowFlash] = useState(false)
   const [videoSrc, setVideoSrc] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [resolution, setResolution] = useState({ w: 0, h: 0 })
 
   useEffect(() => {
-    if (!video) {
-      setVideoSrc(null)
-      return
-    }
+    if (!video) { setVideoSrc(null); return }
 
     const ext = getExtension(video.video_name || '')
-    
+
     if (NATIVE_EXTENSIONS.has(ext)) {
       setVideoSrc(video.video_url || `/media/${video.video_path}`)
       setError(null)
@@ -36,7 +35,6 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
       setLoading(true)
       setError(null)
       const token = localStorage.getItem('access_token')
-      
       fetch(video.stream_url || `/stream/${video.id}/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
@@ -45,8 +43,7 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
           return res.blob()
         })
         .then(blob => {
-          const url = URL.createObjectURL(blob)
-          setVideoSrc(url)
+          setVideoSrc(URL.createObjectURL(blob))
           setLoading(false)
         })
         .catch(err => {
@@ -57,25 +54,26 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
     }
 
     return () => {
-      if (videoSrc && videoSrc.startsWith('blob:')) {
-        URL.revokeObjectURL(videoSrc)
-      }
+      if (videoSrc && videoSrc.startsWith('blob:')) URL.revokeObjectURL(videoSrc)
     }
   }, [video?.id])
 
-  // Reset capture success indicator after 2 seconds
   useEffect(() => {
     if (captureSuccess) {
-      const timer = setTimeout(() => setCaptureSuccess(false), 2000)
-      return () => clearTimeout(timer)
+      const t = setTimeout(() => setCaptureSuccess(false), 2500)
+      return () => clearTimeout(t)
     }
   }, [captureSuccess])
+
+  const handleVideoMetadata = () => {
+    const el = videoRef.current
+    if (el) setResolution({ w: el.videoWidth, h: el.videoHeight })
+  }
 
   const handleCaptureFrame = async () => {
     const videoEl = videoRef.current
     if (!videoEl || !video || !onCaptureFrame) return
 
-    // Pause the video first if playing
     if (!videoEl.paused) {
       videoEl.pause()
       setIsPlaying(false)
@@ -83,38 +81,38 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
 
     setCapturing(true)
     try {
-      // Use an offscreen canvas at the video's native resolution for HD quality
       const canvas = canvasRef.current
-      canvas.width = videoEl.videoWidth   // Native width (e.g. 1920)
-      canvas.height = videoEl.videoHeight // Native height (e.g. 1080)
-      
-      const ctx = canvas.getContext('2d')
-      // Draw the raw video frame — no UI overlays, no pause icons, just the frame
-      ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height)
-      
-      // Use the configured image format and quality (defaults to PNG lossless)
-      const imageFormat = config?.image_format || 'png'
-      const mimeType = imageFormat === 'jpg' ? 'image/jpeg' : `image/${imageFormat}`
-      const quality = config?.compression_quality ? config.compression_quality / 100 : 1.0
-      
-      // Convert to blob using configured settings
-      const blob = await new Promise(resolve => {
-        canvas.toBlob(resolve, mimeType, quality)
+      const nativeW = videoEl.videoWidth
+      const nativeH = videoEl.videoHeight
+      canvas.width  = nativeW
+      canvas.height = nativeH
+
+      const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: false })
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
+      ctx.drawImage(videoEl, 0, 0, nativeW, nativeH)
+
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (b) => b ? resolve(b) : reject(new Error('Canvas toBlob returned null')),
+          'image/png'
+        )
       })
-      
+
       const currentTime = videoEl.currentTime
 
-      // Send to parent to upload
       await onCaptureFrame({
         blob,
         timestamp: currentTime,
-        width: canvas.width,
-        height: canvas.height,
-        videoId: video.id,
+        width:  nativeW,
+        height: nativeH,
+        videoId:   video.id,
         videoName: video.video_name,
-        extension: imageFormat === 'jpg' ? 'jpg' : imageFormat,
+        extension: 'png',
       })
 
+      setShowFlash(true)
+      setTimeout(() => setShowFlash(false), 400)
       setCaptureSuccess(true)
     } catch (err) {
       console.error('Frame capture failed:', err)
@@ -123,60 +121,112 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
     }
   }
 
-  if (!video) {
-    return (
-      <div className="bg-black rounded-lg overflow-hidden aspect-video flex items-center justify-center">
-        <p className="text-gray-500">No video selected</p>
-      </div>
-    )
-  }
+  if (!video) return null
+
+  const is4K = resolution.w >= 3840
+  const isHD = resolution.w >= 1920
+  const resLabel = resolution.w > 0
+    ? is4K ? '4K UHD' : isHD ? 'Full HD' : `${resolution.w}×${resolution.h}`
+    : null
 
   return (
-    <div className="bg-black rounded-lg overflow-hidden">
-      {/* Hidden canvas for HD frame capture */}
+    <div>
       <canvas ref={canvasRef} style={{ display: 'none' }} />
-      
-      {loading ? (
-        <div className="aspect-video flex items-center justify-center">
-          <div className="text-center text-white">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-            <p>Transcoding video for playback...</p>
-            <p className="text-sm text-gray-400 mt-1">This may take a moment for the first time</p>
+
+      <div style={{ position: 'relative', borderRadius: 'var(--radius-lg)', overflow: 'hidden', background: '#000', border: '1px solid var(--border-subtle)' }}>
+        {loading ? (
+          <div style={{ aspectRatio: '16/9', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', background: 'var(--bg-primary)' }}>
+            <div style={{ width: '40px', height: '40px', borderRadius: '50%', border: '2px solid var(--border-strong)', borderTopColor: 'var(--accent-cyan)', animation: 'spin 1s linear infinite' }} />
+            <div style={{ textAlign: 'center' }}>
+              <p style={{ color: 'var(--text-primary)', margin: 0, fontWeight: 600 }}>Transcoding video…</p>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '6px' }}>This may take a moment</p>
+            </div>
           </div>
-        </div>
-      ) : error ? (
-        <div className="aspect-video flex items-center justify-center">
-          <p className="text-red-400 text-center px-4">{error}</p>
-        </div>
-      ) : (
-        <video
-          ref={videoRef}
-          className="w-full"
-          src={videoSrc}
-          onPause={() => setIsPlaying(false)}
-          onPlay={() => setIsPlaying(true)}
-          controls
-          crossOrigin="anonymous"
-        />
-      )}
-      <div className="flex gap-2 p-4 items-center">
+        ) : error ? (
+          <div style={{ aspectRatio: '16/9', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)' }}>
+            <p style={{ color: 'var(--danger)', textAlign: 'center', padding: '0 24px', fontSize: '0.9rem' }}>{error}</p>
+          </div>
+        ) : (
+          <>
+            <video
+              ref={videoRef}
+              style={{ width: '100%', display: 'block' }}
+              src={videoSrc}
+              onPause={() => setIsPlaying(false)}
+              onPlay={() => setIsPlaying(true)}
+              onLoadedMetadata={handleVideoMetadata}
+              controls
+              crossOrigin="anonymous"
+            />
+            {showFlash && (
+              <div style={{
+                position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.8)',
+                pointerEvents: 'none', animation: 'fadeOut 0.4s ease-out forwards'
+              }} />
+            )}
+          </>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '16px 0' }}>
         <button
           onClick={handleCaptureFrame}
           disabled={capturing || loading || !!error}
-          className={`text-white px-5 py-2 rounded font-medium transition-all ${
-            captureSuccess 
-              ? 'bg-emerald-500' 
-              : 'bg-green-600 hover:bg-green-700'
-          } disabled:opacity-50 disabled:cursor-not-allowed`}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '8px',
+            padding: '10px 20px', borderRadius: 'var(--radius-md)',
+            fontWeight: 600, fontSize: '0.9rem',
+            background: captureSuccess ? 'var(--success)' : (capturing || loading || error ? 'var(--bg-surface-elevated)' : 'var(--accent-cyan)'),
+            color: captureSuccess ? '#fff' : (capturing || loading || error ? 'var(--text-muted)' : 'var(--bg-primary)'),
+            cursor: (capturing || loading || error) ? 'not-allowed' : 'pointer',
+            border: `1px solid ${(capturing || loading || error) ? 'var(--border-strong)' : 'transparent'}`,
+            transition: 'all var(--transition-fast)'
+          }}
         >
-          {capturing ? '📸 Capturing...' : captureSuccess ? '✅ Saved!' : '📸 Capture Frame'}
+          {capturing ? (
+            <>
+              <div style={{ width: '16px', height: '16px', borderRadius: '50%', border: '2px solid var(--text-muted)', borderTopColor: 'transparent', animation: 'spin 1s linear infinite' }} />
+              Capturing…
+            </>
+          ) : captureSuccess ? (
+            <>
+              <CheckCircle2 size={18} /> Saved!
+            </>
+          ) : (
+            <>
+              <Camera size={18} /> Capture Frame
+            </>
+          )}
         </button>
-        {!loading && !error && (
-          <span className="text-gray-400 text-sm ml-2">
-            Pause the video, then click to save the current frame in HD
-          </span>
+
+        {!loading && !error && resolution.w > 0 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '10px',
+            padding: '8px 14px', background: 'var(--bg-surface)',
+            border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-full)',
+            fontSize: '0.75rem', color: 'var(--text-secondary)'
+          }}>
+            <Video size={14} />
+            <span>{resolution.w} × {resolution.h}</span>
+            {resLabel && (
+              <span style={{
+                padding: '2px 8px', borderRadius: '999px', fontWeight: 600,
+                background: is4K ? 'var(--success-dim)' : isHD ? 'var(--accent-cyan-dim)' : 'var(--bg-surface-elevated)',
+                color: is4K ? 'var(--success)' : isHD ? 'var(--accent-cyan)' : 'var(--text-muted)'
+              }}>
+                {resLabel}
+              </span>
+            )}
+            <span style={{ color: 'var(--border-strong)' }}>•</span>
+            <span style={{ color: 'var(--success)', fontWeight: 600 }}>Lossless PNG</span>
+          </div>
         )}
       </div>
+
+      <style>{`
+        @keyframes fadeOut { from { opacity: 0.6; } to { opacity: 0; } }
+      `}</style>
     </div>
   )
 }
+

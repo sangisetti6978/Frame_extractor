@@ -1,20 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { videoApi, imageApi } from '../services/videoApi'
-import VideoPlayer from '../components/core/VideoPlayer'
-import LoadingSpinner from '../components/common/LoadingSpinner'
-import NotificationToast from '../components/common/NotificationToast'
-import { formatBytes } from '../utils/formatBytes'
+import React, { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
+import { videoApi } from '../services/videoApi'
+import { Video, ImageIcon, Activity, Clock, PlayCircle, Plus } from 'lucide-react'
 
 export default function Dashboard() {
   const [videos, setVideos] = useState([])
   const [loading, setLoading] = useState(true)
-  const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0)
-  const [selectedVideo, setSelectedVideo] = useState(null)
-  const [notification, setNotification] = useState({ message: '', type: 'info' })
-  const [showNotification, setShowNotification] = useState(false)
-  const [isDragging, setIsDragging] = useState(false)
-  const dragCounter = useRef(0)
 
   useEffect(() => {
     fetchVideos()
@@ -22,293 +13,132 @@ export default function Dashboard() {
 
   const fetchVideos = async () => {
     try {
-      setLoading(true)
       const response = await videoApi.listVideos()
       setVideos(response.data.results || response.data || [])
     } catch (err) {
-      console.error('Failed to load videos:', err)
-      const errorMsg = err.response?.data?.detail || err.message || 'Failed to load videos'
-      setNotification({ message: errorMsg, type: 'error' })
-      setShowNotification(true)
-      setVideos([]) // Set empty array so page can still be viewed
+      console.error(err)
     } finally {
       setLoading(false)
     }
   }
 
-  // Shared upload logic used by both the file input and drag-and-drop
-  const uploadFile = useCallback(async (file) => {
-    if (!file) return
-
-    // Validate it's a video file
-    if (!file.type.startsWith('video/')) {
-      setNotification({ message: 'Please drop a video file', type: 'error' })
-      setShowNotification(true)
-      return
-    }
-
-    // Validate file size (2GB max)
-    if (file.size > 2 * 1024 * 1024 * 1024) {
-      setNotification({ message: 'File size exceeds 2GB limit', type: 'error' })
-      setShowNotification(true)
-      return
-    }
-
-    setUploading(true)
-    try {
-      const response = await videoApi.uploadVideo(file, (progressEvent) => {
-        const progress = Math.round((progressEvent.loaded / progressEvent.total) * 100)
-        setUploadProgress(progress)
-      })
-      const uploadedVideo = response.data
-      setVideos(prev => [uploadedVideo, ...prev])
-      setSelectedVideo(uploadedVideo) // Auto-select the newly uploaded video
-      setNotification({ message: 'Video uploaded successfully!', type: 'success' })
-      setShowNotification(true)
-    } catch (err) {
-      console.error('Upload failed:', err)
-      setNotification({ message: 'Failed to upload video', type: 'error' })
-      setShowNotification(true)
-    } finally {
-      setUploading(false)
-      setUploadProgress(0)
-    }
-  }, [])
-
-  const handleFileUpload = (e) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      uploadFile(file)
-      e.target.value = '' // Reset file input
-    }
-  }
-
-  // --- Drag-and-drop handlers for the entire page ---
-  const handleDragEnter = useCallback((e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    dragCounter.current += 1
-    if (e.dataTransfer.types && e.dataTransfer.types.indexOf('Files') !== -1) {
-      setIsDragging(true)
-    }
-  }, [])
-
-  const handleDragLeave = useCallback((e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    dragCounter.current -= 1
-    if (dragCounter.current === 0) {
-      setIsDragging(false)
-    }
-  }, [])
-
-  const handleDragOver = useCallback((e) => {
-    e.preventDefault()
-    e.stopPropagation()
-  }, [])
-
-  const handleDrop = useCallback((e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(false)
-    dragCounter.current = 0
-
-    const files = e.dataTransfer.files
-    if (files && files.length > 0) {
-      uploadFile(files[0])
-    }
-  }, [uploadFile])
-
-  const handleCaptureFrame = async (frameData) => {
-    try {
-      const response = await imageApi.captureFrame(frameData)
-      setNotification({ message: '📸 Frame captured and saved in HD!', type: 'success' })
-      setShowNotification(true)
-      // Update frame count on the video
-      if (selectedVideo) {
-        const updatedCount = (selectedVideo.frames_extracted || 0) + 1
-        const updatedVideo = { ...selectedVideo, frames_extracted: updatedCount }
-        setSelectedVideo(updatedVideo)
-        setVideos(prev => prev.map(v => v.id === selectedVideo.id ? updatedVideo : v))
-      }
-    } catch (err) {
-      console.error('Capture failed:', err)
-      const errorMsg = err.response?.data?.error || err.message || 'Failed to capture frame'
-      setNotification({ message: errorMsg, type: 'error' })
-      setShowNotification(true)
-    }
-  }
-
-  const handleDeleteVideo = async (id) => {
-    if (!window.confirm('Delete this video?')) return
-
-    try {
-      await videoApi.deleteVideo(id)
-      setVideos(videos.filter(v => v.id !== id))
-      if (selectedVideo?.id === id) {
-        setSelectedVideo(null)
-      }
-      setNotification({ message: 'Video deleted', type: 'success' })
-      setShowNotification(true)
-    } catch (err) {
-      setNotification({ message: 'Failed to delete video', type: 'error' })
-      setShowNotification(true)
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 py-8 flex justify-center">
-        <LoadingSpinner />
-      </div>
-    )
-  }
+  const totalFrames = videos.reduce((sum, v) => sum + (v.frames_extracted || 0), 0)
+  const totalDuration = videos.reduce((sum, v) => sum + (v.duration || 0), 0)
 
   return (
-    <div
-      className="max-w-7xl mx-auto px-4 py-8"
-      style={{ position: 'relative', minHeight: '80vh' }}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-    >
-      {/* Full-page drag overlay */}
-      {isDragging && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'rgba(37, 99, 235, 0.12)',
-            backdropFilter: 'blur(4px)',
-            transition: 'opacity 0.2s',
-          }}
-        >
-          <div
-            style={{
-              border: '3px dashed #2563eb',
-              borderRadius: '1.5rem',
-              padding: '3rem 4rem',
-              background: 'rgba(255,255,255,0.95)',
-              boxShadow: '0 8px 32px rgba(37,99,235,0.18)',
-              textAlign: 'center',
-              pointerEvents: 'none',
+    <div className="animate-fade-in" style={{ maxWidth: '1200px', margin: '0 auto' }}>
+      
+      {/* Hero Section */}
+      <div style={{
+        position: 'relative',
+        padding: '60px 40px',
+        borderRadius: 'var(--radius-xl)',
+        background: 'var(--bg-surface-elevated)',
+        border: '1px solid var(--border-subtle)',
+        overflow: 'hidden',
+        marginBottom: '40px'
+      }}>
+        {/* Subtle radial gradient background */}
+        <div style={{
+          position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
+          width: '80%', height: '100%',
+          background: 'radial-gradient(ellipse at top, rgba(34,211,238,0.15) 0%, transparent 70%)',
+          pointerEvents: 'none'
+        }} />
+        
+        <div style={{ position: 'relative', zIndex: 1, maxWidth: '600px' }}>
+          <h1 className="h1" style={{ marginBottom: '16px' }}>
+            Turn Videos Into <br />
+            <span className="text-gradient">Important Moments</span>
+          </h1>
+          <p className="body" style={{ fontSize: '1.1rem', marginBottom: '32px', color: 'var(--text-secondary)' }}>
+            Let AI automatically detect, analyze, and extract the most meaningful frames from your videos.
+          </p>
+          <div style={{ display: 'flex', gap: '16px' }}>
+            <Link to="/workspace" style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              padding: '12px 24px', borderRadius: 'var(--radius-md)',
+              background: 'var(--text-primary)', color: 'var(--bg-primary)',
+              fontWeight: 600, fontSize: '0.95rem',
+              transition: 'transform var(--transition-fast)'
             }}
-          >
-            <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>📁 ➜ 🎬</div>
-            <p style={{ fontSize: '1.25rem', fontWeight: 600, color: '#2563eb' }}>
-              Drop your video here to upload
-            </p>
-            <p style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.25rem' }}>
-              Supports all video formats up to 2 GB
-            </p>
-          </div>
-        </div>
-      )}
-
-      <h1 className="text-3xl font-bold mb-8">Dashboard</h1>
-
-      <div className="grid md:grid-cols-3 gap-8">
-        {/* Video Player */}
-        <div className="md:col-span-2">
-          <div className="bg-white rounded-lg shadow p-6">
-            {selectedVideo ? (
-              <div>
-                <h2 className="text-xl font-bold mb-4">{selectedVideo.video_name}</h2>
-                <VideoPlayer video={selectedVideo} onCaptureFrame={handleCaptureFrame} />
-                <div className="mt-4 text-sm text-gray-600">
-                  <p>Duration: {selectedVideo.duration?.toFixed(2)}s</p>
-                  <p>Resolution: {selectedVideo.width}x{selectedVideo.height}</p>
-                  <p>FPS: {selectedVideo.fps?.toFixed(2)}</p>
-                  <p>Status: {selectedVideo.status}</p>
-                </div>
-              </div>
-            ) : (
-              <div className="aspect-video bg-gray-200 flex items-center justify-center rounded">
-                <p className="text-gray-500">Select a video to play</p>
-              </div>
-            )}
+            onMouseOver={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+            onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}>
+              <Plus size={18} /> Upload Video
+            </Link>
+            <Link to="/projects" style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              padding: '12px 24px', borderRadius: 'var(--radius-md)',
+              background: 'var(--bg-surface)', border: '1px solid var(--border-strong)',
+              color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.95rem',
+              transition: 'background var(--transition-fast)'
+            }}
+            onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-surface-hover)'}
+            onMouseOut={(e) => e.currentTarget.style.background = 'var(--bg-surface)'}>
+              View Projects
+            </Link>
           </div>
         </div>
 
-        {/* Sidebar */}
-        <div>
-          {/* Upload Section */}
-          <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h3 className="text-lg font-bold mb-4">Upload Video</h3>
-            <label className="flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-6 cursor-pointer hover:bg-gray-50">
-              <span className="text-4xl mb-2">📹</span>
-              <span className="text-sm text-gray-600">Click to upload or drag &amp; drop anywhere</span>
-              <input
-                type="file"
-                accept="video/*"
-                onChange={handleFileUpload}
-                disabled={uploading}
-                className="hidden"
-              />
-            </label>
-            {uploading && (
-              <div className="mt-4">
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div
-                    className="bg-blue-600 h-2 rounded-full transition-all"
-                    style={{ width: `${uploadProgress}%` }}
-                  />
-                </div>
-                <p className="text-sm text-gray-600 mt-2 text-center">{uploadProgress}%</p>
+        {/* Video Processing Visualization */}
+        <div style={{
+          position: 'absolute', right: '40px', top: '50%', transform: 'translateY(-50%)',
+          display: 'flex', flexDirection: 'column', gap: '16px', opacity: 0.6
+        }}>
+          {['VIDEO', 'AI ANALYSIS', 'SCENE DETECTION', 'KEY FRAME EXTRACTION'].map((text, i) => (
+            <div key={text} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+              <div style={{
+                padding: '8px 16px', borderRadius: 'var(--radius-full)',
+                background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)',
+                fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.1em',
+                color: i === 3 ? 'var(--accent-cyan)' : 'var(--text-muted)',
+                boxShadow: i === 3 ? '0 0 20px rgba(34,211,238,0.2)' : 'none'
+              }}>
+                {text}
               </div>
-            )}
-          </div>
-
-          {/* Videos List */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-bold mb-4">Your Videos</h3>
-            {videos.length === 0 ? (
-              <p className="text-gray-500 text-sm">No videos yet. Upload one!</p>
-            ) : (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {videos.map((video) => (
-                  <div
-                    key={video.id}
-                    className={`p-3 rounded border-2 cursor-pointer transition ${selectedVideo?.id === video.id
-                        ? 'border-blue-600 bg-blue-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    onClick={() => setSelectedVideo(video)}
-                  >
-                    <p className="font-medium text-sm truncate">{video.video_name}</p>
-                    <p className="text-xs text-gray-600">{formatBytes(video.video_size)}</p>
-                    <p className="text-xs text-gray-600">Frames: {video.frames_extracted}</p>
-                    <div className="flex gap-2 mt-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleDeleteVideo(video.id)
-                        }}
-                        className="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+              {i < 3 && <div style={{ width: '2px', height: '16px', background: 'var(--border-strong)' }} />}
+            </div>
+          ))}
         </div>
       </div>
 
-      {showNotification && (
-        <NotificationToast
-          message={notification.message}
-          type={notification.type}
-          duration={3000}
-        />
-      )}
+      {/* Stats Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginBottom: '40px' }}>
+        {[
+          { label: 'Videos Processed', value: videos.length, icon: Video, color: 'var(--accent-purple)' },
+          { label: 'Frames Extracted', value: totalFrames, icon: ImageIcon, color: 'var(--accent-cyan)' },
+          { label: 'Scenes Detected', value: Math.floor(totalFrames / 3) || 0, icon: Activity, color: 'var(--success)' },
+          { label: 'Total Duration', value: `${(totalDuration / 60).toFixed(1)} min`, icon: Clock, color: 'var(--warning)' }
+        ].map((stat, i) => (
+          <div key={stat.label} className="glass-panel" style={{ 
+            padding: '24px', 
+            transition: 'transform var(--transition-normal), box-shadow var(--transition-normal)' 
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.transform = 'translateY(-4px)'
+            e.currentTarget.style.boxShadow = 'var(--shadow-lg)'
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)'
+            e.currentTarget.style.boxShadow = 'var(--shadow-sm)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+              <div style={{
+                width: '32px', height: '32px', borderRadius: '8px',
+                background: `color-mix(in srgb, ${stat.color} 15%, transparent)`,
+                color: stat.color, display: 'flex', alignItems: 'center', justifyContent: 'center'
+              }}>
+                <stat.icon size={18} />
+              </div>
+              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{stat.label}</span>
+            </div>
+            <div style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+              {loading ? '-' : stat.value}
+            </div>
+          </div>
+        ))}
+      </div>
+
     </div>
   )
 }

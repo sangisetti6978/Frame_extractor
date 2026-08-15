@@ -69,11 +69,15 @@ TEMPLATES = [
 WSGI_APPLICATION = 'video_extractor.wsgi.application'
 ASGI_APPLICATION = 'video_extractor.asgi.application'
 
-# Database - SQLite for development (switch to MongoDB in production)
+# Database - PostgreSQL
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('DB_NAME', 'auto_frame_db'),
+        'USER': os.getenv('DB_USER', 'postgres'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'postgres'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '5432'),
     }
 }
 
@@ -135,3 +139,7 @@ CORS_ALLOW_CREDENTIALS = True
 # JWT
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-jwt-secret-key')
 JWT_EXPIRATION = int(os.getenv('JWT_EXPIRATION', 3600))
+
+# Gemini API
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+

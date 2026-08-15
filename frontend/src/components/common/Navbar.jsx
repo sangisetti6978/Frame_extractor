@@ -1,351 +1,248 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { useContext, useState, useEffect } from 'react'
+import { useContext, useState, useEffect, useRef } from 'react'
 import { AuthContext } from '../../context/AuthContext'
 
-/* ─── Inline styles for the pro navbar ─── */
-const s = {
-  nav: (scrolled) => ({
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 1000,
-    height: '72px',
-    display: 'flex',
-    alignItems: 'center',
-    padding: '0 clamp(16px, 4vw, 48px)',
-    transition: 'all 0.4s cubic-bezier(0.4,0,0.2,1)',
-    background: scrolled
-      ? 'rgba(8,8,18,0.82)'
-      : 'rgba(8,8,18,0.45)',
-    backdropFilter: 'blur(20px) saturate(1.6)',
-    WebkitBackdropFilter: 'blur(20px) saturate(1.6)',
-    borderBottom: scrolled
-      ? '1px solid rgba(255,255,255,0.08)'
-      : '1px solid rgba(255,255,255,0.04)',
-    boxShadow: scrolled
-      ? '0 8px 32px rgba(0,0,0,0.35)'
-      : 'none',
-  }),
-  inner: {
-    width: '100%',
-    maxWidth: '1280px',
-    margin: '0 auto',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
+/* ─── Premium Navbar CSS ─── */
+const navCSS = `
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-  /* Logo */
-  logoWrap: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    textDecoration: 'none',
-    transition: 'transform 0.3s',
-  },
-  logoIcon: {
-    width: '38px',
-    height: '38px',
-    borderRadius: '12px',
-    background: 'linear-gradient(135deg, #7c3aed, #2563eb)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 4px 16px rgba(124,58,237,0.35)',
-    transition: 'all 0.3s',
-  },
-  logoText: {
-    fontSize: '1.25rem',
-    fontWeight: 800,
-    letterSpacing: '-0.03em',
-    background: 'linear-gradient(135deg, #f0f0f5 60%, #a78bfa 100%)',
-    WebkitBackgroundClip: 'text',
-    WebkitTextFillColor: 'transparent',
-    backgroundClip: 'text',
-  },
-
-  /* Nav links */
-  linksRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '4px',
-    listStyle: 'none',
-    margin: 0,
-    padding: 0,
-  },
-  navLink: (active) => ({
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '8px 16px',
-    borderRadius: '10px',
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    letterSpacing: '0.01em',
-    color: active ? '#fff' : 'rgba(240,240,245,0.6)',
-    background: active ? 'rgba(124,58,237,0.18)' : 'transparent',
-    border: active ? '1px solid rgba(124,58,237,0.3)' : '1px solid transparent',
-    textDecoration: 'none',
-    transition: 'all 0.25s cubic-bezier(0.4,0,0.2,1)',
-    cursor: 'pointer',
-    position: 'relative',
-  }),
-
-  /* Auth buttons */
-  authRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-  },
-  btnLogin: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '9px 20px',
-    borderRadius: '10px',
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    color: 'rgba(240,240,245,0.75)',
-    background: 'rgba(255,255,255,0.05)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    textDecoration: 'none',
-    cursor: 'pointer',
-    transition: 'all 0.25s',
-  },
-  btnSignup: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '9px 22px',
-    borderRadius: '10px',
-    fontSize: '0.875rem',
-    fontWeight: 700,
-    color: '#fff',
-    background: 'linear-gradient(135deg, #7c3aed, #2563eb)',
-    border: 'none',
-    textDecoration: 'none',
-    cursor: 'pointer',
-    transition: 'all 0.25s',
-    boxShadow: '0 4px 16px rgba(124,58,237,0.35), inset 0 1px 0 rgba(255,255,255,0.15)',
-  },
-
-  /* User pill */
-  userPill: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    padding: '6px 14px 6px 6px',
-    borderRadius: '12px',
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.08)',
-    transition: 'all 0.25s',
-    cursor: 'default',
-  },
-  userAvatar: {
-    width: '32px',
-    height: '32px',
-    borderRadius: '9px',
-    background: 'linear-gradient(135deg, #7c3aed, #2563eb)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: '#fff',
-    fontWeight: 700,
-    fontSize: '0.8rem',
-    boxShadow: '0 2px 8px rgba(124,58,237,0.3)',
-  },
-  userName: {
-    fontSize: '0.85rem',
-    fontWeight: 600,
-    color: 'rgba(240,240,245,0.85)',
-  },
-  btnLogout: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '8px 18px',
-    borderRadius: '10px',
-    fontSize: '0.8rem',
-    fontWeight: 600,
-    color: '#fca5a5',
-    background: 'rgba(239,68,68,0.1)',
-    border: '1px solid rgba(239,68,68,0.2)',
-    cursor: 'pointer',
-    transition: 'all 0.25s',
-  },
-
-  /* Mobile hamburger */
-  hamburger: {
-    display: 'none',
-    padding: '8px',
-    borderRadius: '10px',
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.08)',
-    cursor: 'pointer',
-    transition: 'all 0.25s',
-    color: 'rgba(240,240,245,0.8)',
-  },
-
-  /* Mobile drawer */
-  drawer: (open) => ({
-    position: 'fixed',
-    top: '72px',
-    left: 0,
-    right: 0,
-    bottom: open ? 0 : 'auto',
-    background: 'rgba(8,8,18,0.95)',
-    backdropFilter: 'blur(24px)',
-    WebkitBackdropFilter: 'blur(24px)',
-    borderTop: '1px solid rgba(255,255,255,0.06)',
-    padding: open ? '16px 24px 32px' : '0 24px',
-    maxHeight: open ? '100vh' : '0',
-    overflow: 'hidden',
-    transition: 'all 0.35s cubic-bezier(0.4,0,0.2,1)',
-    opacity: open ? 1 : 0,
-    zIndex: 999,
-  }),
-  drawerLink: (active) => ({
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    padding: '14px 16px',
-    borderRadius: '12px',
-    fontSize: '1rem',
-    fontWeight: 600,
-    color: active ? '#fff' : 'rgba(240,240,245,0.65)',
-    background: active ? 'rgba(124,58,237,0.15)' : 'transparent',
-    border: active ? '1px solid rgba(124,58,237,0.25)' : '1px solid transparent',
-    textDecoration: 'none',
-    transition: 'all 0.2s',
-    marginBottom: '4px',
-  }),
-  drawerDivider: {
-    height: '1px',
-    background: 'linear-gradient(to right, transparent, rgba(255,255,255,0.08), transparent)',
-    margin: '12px 0',
-  },
-  drawerBtnLogin: {
-    display: 'block',
-    width: '100%',
-    textAlign: 'center',
-    padding: '14px',
-    borderRadius: '12px',
-    fontSize: '0.95rem',
-    fontWeight: 600,
-    color: 'rgba(240,240,245,0.8)',
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    textDecoration: 'none',
-    transition: 'all 0.2s',
-    marginBottom: '8px',
-  },
-  drawerBtnSignup: {
-    display: 'block',
-    width: '100%',
-    textAlign: 'center',
-    padding: '14px',
-    borderRadius: '12px',
-    fontSize: '0.95rem',
-    fontWeight: 700,
-    color: '#fff',
-    background: 'linear-gradient(135deg, #7c3aed, #2563eb)',
-    border: 'none',
-    textDecoration: 'none',
-    transition: 'all 0.2s',
-    boxShadow: '0 4px 16px rgba(124,58,237,0.3)',
-  },
+/* ── Navbar aurora border animation ── */
+@keyframes navAuroraShift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
-/* ─── Navbar style injection (hover effects + responsive) ─── */
-const navStyleSheet = `
-.pro-nav-link:hover {
-  color: #fff !important;
+@keyframes navLogoGlow {
+  0%, 100% { box-shadow: 0 4px 16px rgba(124,58,237,0.35), 0 0 0 0 rgba(124,58,237,0); }
+  50%       { box-shadow: 0 4px 20px rgba(124,58,237,0.5), 0 0 0 6px rgba(124,58,237,0.06); }
+}
+
+@keyframes navPillSlide {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes navDrawerIn {
+  from { opacity: 0; transform: translateY(-12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes avatarPulseRing {
+  0%   { transform: scale(0.9); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* ── Logo ── */
+.pnav-logo-icon {
+  animation: navLogoGlow 3s ease-in-out infinite;
+  transition: transform 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.pnav-logo-wrap:hover .pnav-logo-icon {
+  transform: rotate(-8deg) scale(1.08) !important;
+  box-shadow: 0 8px 28px rgba(124,58,237,0.55), 0 0 0 6px rgba(124,58,237,0.08) !important;
+}
+.pnav-logo-text {
+  transition: all 0.3s;
+}
+.pnav-logo-wrap:hover .pnav-logo-text {
+  background: linear-gradient(135deg, #ffffff 0%, #c4b5fd 100%) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
+}
+
+/* ── Nav Links ── */
+.pnav-link {
+  position: relative;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.pnav-link::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #7c3aed, #60a5fa);
+  transition: width 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.pnav-link:hover::after,
+.pnav-link.active::after {
+  width: 60%;
+}
+.pnav-link:hover {
+  color: #ffffff !important;
   background: rgba(255,255,255,0.06) !important;
+  transform: translateY(-1px);
 }
-.pro-logo-wrap:hover {
-  transform: scale(1.02);
+.pnav-link.active {
+  color: #ffffff !important;
+  background: rgba(124,58,237,0.15) !important;
+  border-color: rgba(124,58,237,0.3) !important;
 }
-.pro-logo-wrap:hover .pro-logo-icon {
-  box-shadow: 0 6px 24px rgba(124,58,237,0.5) !important;
-  transform: rotate(-4deg);
+.pnav-link .pnav-link-icon {
+  transition: transform 0.3s cubic-bezier(0.23, 1, 0.32, 1);
 }
-.pro-btn-login:hover {
+.pnav-link:hover .pnav-link-icon {
+  transform: scale(1.15);
+}
+
+/* ── Auth Buttons ── */
+.pnav-btn-login {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.pnav-btn-login:hover {
   color: #fff !important;
-  background: rgba(255,255,255,0.1) !important;
-  border-color: rgba(255,255,255,0.18) !important;
+  background: rgba(255,255,255,0.08) !important;
+  border-color: rgba(255,255,255,0.2) !important;
+  transform: translateY(-1px);
 }
-.pro-btn-signup:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(124,58,237,0.5), inset 0 1px 0 rgba(255,255,255,0.2) !important;
+
+.pnav-btn-signup {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.35s cubic-bezier(0.23, 1, 0.32, 1);
 }
-.pro-btn-logout:hover {
-  color: #fef2f2 !important;
+.pnav-btn-signup::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0));
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.pnav-btn-signup:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 10px 28px rgba(124,58,237,0.55), inset 0 1px 0 rgba(255,255,255,0.25) !important;
+}
+.pnav-btn-signup:hover::before {
+  opacity: 1;
+}
+
+/* ── User Pill ── */
+.pnav-user-pill {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.pnav-user-pill:hover {
+  background: rgba(255,255,255,0.08) !important;
+  border-color: rgba(124,58,237,0.25) !important;
+  transform: translateY(-1px);
+}
+
+/* ── Logout Button ── */
+.pnav-btn-logout {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.pnav-btn-logout:hover {
+  color: #fff !important;
   background: rgba(239,68,68,0.2) !important;
-  border-color: rgba(239,68,68,0.35) !important;
+  border-color: rgba(239,68,68,0.45) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(239,68,68,0.2);
 }
-.pro-user-pill:hover {
-  background: rgba(255,255,255,0.09) !important;
-  border-color: rgba(255,255,255,0.12) !important;
+
+/* ── Hamburger ── */
+.pnav-hamburger {
+  transition: all 0.25s;
 }
-.pro-hamburger:hover {
+.pnav-hamburger:hover {
   background: rgba(255,255,255,0.1) !important;
+  border-color: rgba(255,255,255,0.15) !important;
   color: #fff !important;
 }
-.pro-drawer-link:hover {
-  color: #fff !important;
+
+/* ── Mobile Drawer Links ── */
+.pnav-drawer-link {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.pnav-drawer-link:hover {
   background: rgba(255,255,255,0.06) !important;
+  border-color: rgba(255,255,255,0.1) !important;
+  color: #fff !important;
+  transform: translateX(4px);
 }
-.pro-drawer-btn-login:hover {
-  background: rgba(255,255,255,0.1) !important;
+.pnav-drawer-link.active {
+  background: rgba(124,58,237,0.15) !important;
+  border-color: rgba(124,58,237,0.3) !important;
   color: #fff !important;
 }
-.pro-drawer-btn-signup:hover {
+
+/* ── Drawer Buttons ── */
+.pnav-drawer-btn-login:hover {
+  background: rgba(255,255,255,0.08) !important;
+  color: #fff !important;
+}
+.pnav-drawer-btn-signup:hover {
   transform: translateY(-1px);
   box-shadow: 0 8px 24px rgba(124,58,237,0.45) !important;
 }
 
+/* ── Responsive ── */
 @media (max-width: 768px) {
-  .pro-desktop-links,
-  .pro-desktop-auth {
+  .pnav-desktop-links,
+  .pnav-desktop-auth {
     display: none !important;
   }
-  .pro-hamburger {
+  .pnav-hamburger {
     display: flex !important;
   }
 }
 `
 
-/* ─── Nav link icons ─── */
+/* ─── SVG Film Reel Logo ─── */
+function FilmReelIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="2" width="20" height="20" rx="2.18"/>
+      <line x1="7" y1="2" x2="7" y2="22"/>
+      <line x1="17" y1="2" x2="17" y2="22"/>
+      <line x1="2" y1="12" x2="22" y2="12"/>
+      <line x1="2" y1="7" x2="7" y2="7"/>
+      <line x1="2" y1="17" x2="7" y2="17"/>
+      <line x1="17" y1="7" x2="22" y2="7"/>
+      <line x1="17" y1="17" x2="22" y2="17"/>
+    </svg>
+  )
+}
+
 const NavIcons = {
   Home: () => (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
     </svg>
   ),
   Dashboard: () => (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+      <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
     </svg>
   ),
   Gallery: () => (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
     </svg>
   ),
   Setup: () => (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
     </svg>
   ),
-  Film: () => (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/>
+  Logout: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
     </svg>
   ),
-  Logout: () => (
+  ChevronDown: () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="6 9 12 15 18 9"/>
+    </svg>
+  ),
+  Shield: () => (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
     </svg>
   ),
 }
@@ -355,6 +252,7 @@ const iconMap = {
   Dashboard: NavIcons.Dashboard,
   Gallery: NavIcons.Gallery,
   Setup: NavIcons.Setup,
+  'Admin Panel': NavIcons.Shield,
 }
 
 export default function Navbar() {
@@ -363,29 +261,32 @@ export default function Navbar() {
   const location = useLocation()
   const [isOpen, setIsOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
+  const [scrollProgress, setScrollProgress] = useState(0)
 
-  /* Inject styles once */
+  /* Inject CSS once */
   useEffect(() => {
-    const id = 'pro-navbar-styles'
+    const id = 'pnav-premium-styles'
     if (!document.getElementById(id)) {
       const el = document.createElement('style')
       el.id = id
-      el.textContent = navStyleSheet
+      el.textContent = navCSS
       document.head.appendChild(el)
     }
   }, [])
 
   /* Scroll listener */
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 20)
+    const onScroll = () => {
+      setScrolled(window.scrollY > 20)
+      const docH = document.documentElement.scrollHeight - window.innerHeight
+      setScrollProgress(docH > 0 ? (window.scrollY / docH) * 100 : 0)
+    }
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
   /* Close drawer on route change */
-  useEffect(() => {
-    setIsOpen(false)
-  }, [location.pathname])
+  useEffect(() => { setIsOpen(false) }, [location.pathname])
 
   const handleLogout = () => {
     logout()
@@ -398,7 +299,8 @@ export default function Navbar() {
     ...(isAuthenticated ? [
       { to: '/dashboard', label: 'Dashboard' },
       { to: '/gallery', label: 'Gallery' },
-      { to: '/setup', label: 'Setup' }
+      { to: '/setup', label: 'Setup' },
+      ...((user?.is_staff || user?.is_superuser) ? [{ to: '/admin-panel', label: 'Admin Panel' }] : [])
     ] : [])
   ]
 
@@ -406,28 +308,86 @@ export default function Navbar() {
 
   return (
     <>
-      <nav style={s.nav(scrolled)}>
-        <div style={s.inner}>
-          {/* ─── Logo ─── */}
-          <Link to="/" style={s.logoWrap} className="pro-logo-wrap">
-            <div style={s.logoIcon} className="pro-logo-icon">
-              <NavIcons.Film />
+      {/* ── Main Nav ── */}
+      <nav style={{
+        position: 'fixed',
+        top: 0, left: 0, right: 0,
+        zIndex: 1000,
+        height: '68px',
+        display: 'flex',
+        alignItems: 'center',
+        padding: '0 clamp(16px, 4vw, 48px)',
+        transition: 'all 0.4s cubic-bezier(0.4,0,0.2,1)',
+        background: scrolled
+          ? 'rgba(5,5,16,0.88)'
+          : 'rgba(5,5,16,0.4)',
+        backdropFilter: 'blur(24px) saturate(1.8)',
+        WebkitBackdropFilter: 'blur(24px) saturate(1.8)',
+        borderBottom: scrolled
+          ? '1px solid rgba(255,255,255,0.07)'
+          : '1px solid rgba(255,255,255,0.03)',
+        boxShadow: scrolled
+          ? '0 8px 40px rgba(0,0,0,0.4), inset 0 -1px 0 rgba(255,255,255,0.04)'
+          : 'none',
+      }}>
+        <div style={{
+          width: '100%', maxWidth: '1300px', margin: '0 auto',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+
+          {/* ── Logo ── */}
+          <Link
+            to="/"
+            className="pnav-logo-wrap"
+            style={{ display: 'flex', alignItems: 'center', gap: '11px', textDecoration: 'none' }}
+          >
+            <div
+              className="pnav-logo-icon"
+              style={{
+                width: '36px', height: '36px', borderRadius: '11px',
+                background: 'linear-gradient(135deg, #7c3aed, #2563eb)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#fff', flexShrink: 0,
+              }}
+            >
+              <FilmReelIcon />
             </div>
-            <span style={s.logoText}>FrameExtractor</span>
+            <span
+              className="pnav-logo-text"
+              style={{
+                fontSize: '1.15rem', fontWeight: 800, letterSpacing: '-0.035em',
+                background: 'linear-gradient(135deg, #f0f0f5 60%, #a78bfa 100%)',
+                WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
+              }}
+            >
+              FrameExtractor
+            </span>
           </Link>
 
-          {/* ─── Desktop Nav Links ─── */}
-          <ul style={s.linksRow} className="pro-desktop-links">
+          {/* ── Desktop Nav Links ── */}
+          <ul className="pnav-desktop-links" style={{
+            display: 'flex', alignItems: 'center', gap: '2px',
+            listStyle: 'none', margin: 0, padding: 0,
+          }}>
             {navLinks.map((link) => {
               const Icon = iconMap[link.label]
+              const active = isActive(link.to)
               return (
                 <li key={link.to} style={{ listStyle: 'none' }}>
                   <Link
                     to={link.to}
-                    style={s.navLink(isActive(link.to))}
-                    className="pro-nav-link"
+                    className={`pnav-link${active ? ' active' : ''}`}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '6px',
+                      padding: '7px 14px', borderRadius: '9px',
+                      fontSize: '0.855rem', fontWeight: 600, letterSpacing: '0.005em',
+                      color: active ? '#fff' : 'rgba(237,237,242,0.55)',
+                      background: active ? 'rgba(124,58,237,0.14)' : 'transparent',
+                      border: active ? '1px solid rgba(124,58,237,0.28)' : '1px solid transparent',
+                      textDecoration: 'none', cursor: 'pointer',
+                    }}
                   >
-                    {Icon && <Icon />}
+                    {Icon && <span className="pnav-link-icon"><Icon /></span>}
                     {link.label}
                   </Link>
                 </li>
@@ -435,44 +395,109 @@ export default function Navbar() {
             })}
           </ul>
 
-          {/* ─── Desktop Auth ─── */}
-          <div style={s.authRow} className="pro-desktop-auth">
+          {/* ── Desktop Auth ── */}
+          <div className="pnav-desktop-auth" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             {isAuthenticated ? (
               <>
-                <div style={s.userPill} className="pro-user-pill">
-                  <div style={s.userAvatar}>
-                    {user?.username?.charAt(0).toUpperCase()}
+                {/* User pill */}
+                <div
+                  className="pnav-user-pill"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '9px',
+                    padding: '5px 12px 5px 5px', borderRadius: '11px',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    cursor: 'default',
+                  }}
+                >
+                  {/* Avatar with ring */}
+                  <div style={{ position: 'relative', width: '30px', height: '30px' }}>
+                    <div style={{
+                      position: 'absolute', inset: '-2px', borderRadius: '9px',
+                      background: 'linear-gradient(135deg, #7c3aed, #06b6d4)',
+                      opacity: 0.5,
+                    }} />
+                    <div style={{
+                      position: 'relative',
+                      width: '30px', height: '30px', borderRadius: '8px',
+                      background: 'linear-gradient(135deg, #7c3aed, #2563eb)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: '#fff', fontWeight: 700, fontSize: '0.75rem',
+                      boxShadow: '0 2px 8px rgba(124,58,237,0.4)',
+                    }}>
+                      {user?.username?.charAt(0).toUpperCase()}
+                    </div>
                   </div>
-                  <span style={s.userName}>{user?.username}</span>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'rgba(237,237,242,0.85)' }}>
+                    {user?.username}
+                  </span>
                 </div>
+
+                {/* Logout */}
                 <button
                   onClick={handleLogout}
-                  style={s.btnLogout}
-                  className="pro-btn-logout"
+                  className="pnav-btn-logout"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    padding: '7px 16px', borderRadius: '9px',
+                    fontSize: '0.78rem', fontWeight: 600, color: '#fca5a5',
+                    background: 'rgba(239,68,68,0.08)',
+                    border: '1px solid rgba(239,68,68,0.18)',
+                    cursor: 'pointer',
+                  }}
                 >
                   <NavIcons.Logout /> Logout
                 </button>
               </>
             ) : (
               <>
-                <Link to="/login" style={s.btnLogin} className="pro-btn-login">
+                <Link
+                  to="/login"
+                  className="pnav-btn-login"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    padding: '8px 18px', borderRadius: '9px',
+                    fontSize: '0.855rem', fontWeight: 600,
+                    color: 'rgba(237,237,242,0.7)',
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.09)',
+                    textDecoration: 'none',
+                  }}
+                >
                   Login
                 </Link>
-                <Link to="/register" style={s.btnSignup} className="pro-btn-signup">
+                <Link
+                  to="/register"
+                  className="pnav-btn-signup"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    padding: '8px 20px', borderRadius: '9px',
+                    fontSize: '0.855rem', fontWeight: 700, color: '#fff',
+                    background: 'linear-gradient(135deg, #7c3aed, #2563eb)',
+                    border: 'none', textDecoration: 'none',
+                    boxShadow: '0 4px 16px rgba(124,58,237,0.4), inset 0 1px 0 rgba(255,255,255,0.18)',
+                  }}
+                >
                   Get Started
                 </Link>
               </>
             )}
           </div>
 
-          {/* ─── Hamburger (mobile) ─── */}
+          {/* ── Hamburger ── */}
           <button
             onClick={() => setIsOpen(!isOpen)}
-            style={s.hamburger}
-            className="pro-hamburger"
+            className="pnav-hamburger"
             aria-label="Toggle menu"
+            style={{
+              display: 'none', padding: '8px', borderRadius: '10px',
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              cursor: 'pointer', color: 'rgba(237,237,242,0.75)',
+              alignItems: 'center', justifyContent: 'center',
+            }}
           >
-            <svg width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
               {isOpen ? (
                 <path d="M18 6L6 18M6 6l12 12" />
               ) : (
@@ -487,38 +512,102 @@ export default function Navbar() {
         </div>
       </nav>
 
-      {/* ─── Mobile Drawer ─── */}
-      <div style={s.drawer(isOpen)}>
-        {navLinks.map((link) => {
-          const Icon = iconMap[link.label]
-          return (
-            <Link
-              key={link.to}
-              to={link.to}
-              style={s.drawerLink(isActive(link.to))}
-              className="pro-drawer-link"
-              onClick={() => setIsOpen(false)}
-            >
-              {Icon && <Icon />}
-              {link.label}
-            </Link>
-          )
-        })}
+      {/* ── Progress Bar ── */}
+      <div style={{
+        position: 'fixed', top: '68px', left: 0, right: 0, height: '2px',
+        zIndex: 999, pointerEvents: 'none',
+      }}>
+        <div style={{
+          height: '100%', width: `${scrollProgress}%`,
+          background: 'linear-gradient(90deg, #7c3aed, #06b6d4)',
+          transition: 'width 0.1s linear',
+          boxShadow: '0 0 8px rgba(124,58,237,0.6)',
+        }} />
+      </div>
 
-        <div style={s.drawerDivider} />
+      {/* ── Mobile Drawer ── */}
+      <div style={{
+        position: 'fixed', top: '68px', left: 0, right: 0,
+        background: 'rgba(5,5,16,0.97)',
+        backdropFilter: 'blur(32px)',
+        WebkitBackdropFilter: 'blur(32px)',
+        borderTop: '1px solid rgba(255,255,255,0.05)',
+        padding: isOpen ? '20px 24px 36px' : '0 24px',
+        maxHeight: isOpen ? '100vh' : '0',
+        overflow: 'hidden',
+        transition: 'all 0.35s cubic-bezier(0.4,0,0.2,1)',
+        opacity: isOpen ? 1 : 0,
+        zIndex: 999,
+      }}>
+        {/* Nav Links */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '16px' }}>
+          {navLinks.map((link) => {
+            const Icon = iconMap[link.label]
+            const active = isActive(link.to)
+            return (
+              <Link
+                key={link.to}
+                to={link.to}
+                className={`pnav-drawer-link${active ? ' active' : ''}`}
+                onClick={() => setIsOpen(false)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '12px',
+                  padding: '13px 16px', borderRadius: '12px',
+                  fontSize: '0.95rem', fontWeight: 600,
+                  color: active ? '#fff' : 'rgba(237,237,242,0.6)',
+                  background: active ? 'rgba(124,58,237,0.14)' : 'transparent',
+                  border: active ? '1px solid rgba(124,58,237,0.25)' : '1px solid transparent',
+                  textDecoration: 'none',
+                }}
+              >
+                {Icon && <Icon />}
+                {link.label}
+              </Link>
+            )
+          })}
+        </div>
 
+        {/* Divider */}
+        <div style={{
+          height: '1px',
+          background: 'linear-gradient(to right, transparent, rgba(255,255,255,0.07), transparent)',
+          margin: '12px 0',
+        }} />
+
+        {/* Auth section */}
         {isAuthenticated ? (
           <>
-            <div style={{ ...s.userPill, margin: '8px 0 12px', padding: '12px 16px' }} className="pro-user-pill">
-              <div style={s.userAvatar}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '10px',
+              padding: '12px 16px', borderRadius: '12px',
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.07)',
+              marginBottom: '10px',
+            }}>
+              <div style={{
+                width: '32px', height: '32px', borderRadius: '9px',
+                background: 'linear-gradient(135deg, #7c3aed, #2563eb)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#fff', fontWeight: 700, fontSize: '0.8rem',
+                boxShadow: '0 2px 8px rgba(124,58,237,0.35)',
+              }}>
                 {user?.username?.charAt(0).toUpperCase()}
               </div>
-              <span style={s.userName}>{user?.username}</span>
+              <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'rgba(237,237,242,0.85)' }}>
+                {user?.username}
+              </span>
             </div>
             <button
               onClick={handleLogout}
-              style={{ ...s.btnLogout, width: '100%', justifyContent: 'center', padding: '14px' }}
-              className="pro-btn-logout"
+              className="pnav-btn-logout"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                width: '100%', padding: '13px',
+                borderRadius: '12px', fontSize: '0.9rem', fontWeight: 600,
+                color: '#fca5a5', background: 'rgba(239,68,68,0.08)',
+                border: '1px solid rgba(239,68,68,0.18)',
+                cursor: 'pointer',
+              }}
             >
               <NavIcons.Logout /> Logout
             </button>
@@ -527,17 +616,34 @@ export default function Navbar() {
           <>
             <Link
               to="/login"
-              style={s.drawerBtnLogin}
-              className="pro-drawer-btn-login"
+              className="pnav-drawer-btn-login"
               onClick={() => setIsOpen(false)}
+              style={{
+                display: 'block', textAlign: 'center', width: '100%',
+                padding: '13px', borderRadius: '12px', marginBottom: '10px',
+                fontSize: '0.95rem', fontWeight: 600,
+                color: 'rgba(237,237,242,0.8)',
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.09)',
+                textDecoration: 'none',
+                transition: 'all 0.2s',
+              }}
             >
               Login
             </Link>
             <Link
               to="/register"
-              style={s.drawerBtnSignup}
-              className="pro-drawer-btn-signup"
+              className="pnav-drawer-btn-signup"
               onClick={() => setIsOpen(false)}
+              style={{
+                display: 'block', textAlign: 'center', width: '100%',
+                padding: '13px', borderRadius: '12px',
+                fontSize: '0.95rem', fontWeight: 700, color: '#fff',
+                background: 'linear-gradient(135deg, #7c3aed, #2563eb)',
+                border: 'none', textDecoration: 'none',
+                boxShadow: '0 4px 16px rgba(124,58,237,0.35)',
+                transition: 'all 0.2s',
+              }}
             >
               Get Started →
             </Link>

@@ -3,10 +3,18 @@ from video_extractor.core.models import CapturedImage, VideoUpload
 
 
 class CapturedImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
     class Meta:
         model = CapturedImage
-        fields = ['id', 'image_url', 'source_video', 'timestamp', 'is_blurred', 'blur_score', 'file_size', 'width', 'height', 'created_at']
+        fields = ['id', 'image_url', 'source_video', 'timestamp', 'is_blurred', 'blur_score', 'is_exported', 'file_size', 'width', 'height', 'created_at']
         read_only_fields = ['id', 'created_at']
+
+    def get_image_url(self, obj):
+        # Serve images directly from the media directory
+        if obj.image_path and not obj.image_path.startswith('/'):
+            return f'/media/{obj.image_path}'
+        return obj.image_path or ''
 
 
 class VideoUploadSerializer(serializers.ModelSerializer):

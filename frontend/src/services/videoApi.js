@@ -11,7 +11,6 @@ const videoApi = {
     const formData = new FormData()
     formData.append('video', file)
     return api.post('/videos/', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress
     })
   },
@@ -19,8 +18,8 @@ const videoApi = {
   deleteVideo: (id) =>
     api.delete(`/videos/${id}/`),
 
-  extractFrames: (id) =>
-    api.post(`/videos/${id}/extract_frames/`)
+  extractFrames: (id, settings = {}) =>
+    api.post(`/videos/${id}/extract_frames/`, settings)
 }
 
 const imageApi = {
@@ -48,11 +47,17 @@ const imageApi = {
     formData.append('width', width)
     formData.append('height', height)
     formData.append('video_name', videoName)
-    return api.post('/images/capture_frame/', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
-  }
+    return api.post('/images/capture_frame/', formData)
+  },
+
+  exportToFolder: (imageIds) =>
+    api.post('/images/export_to_folder/', { image_ids: imageIds })
 }
 
-export { videoApi, imageApi }
+const aiApi = {
+  askQuestion: (question) =>
+    api.post('/ai/ask/', { question })
+}
+
+export { videoApi, imageApi, aiApi }
 export default videoApi

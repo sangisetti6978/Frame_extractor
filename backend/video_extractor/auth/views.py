@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from django.utils import timezone
 from video_extractor.core.models import User
 from video_extractor.core.serializers import UserSerializer
 import json
@@ -92,6 +93,10 @@ def login(request):
         user = authenticate(username=username, password=password)
         if not user:
             return Response({'error': 'Invalid username or password'}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        # Update last_seen timestamp
+        user.last_seen = timezone.now()
+        user.save(update_fields=['last_seen'])
         
         refresh = RefreshToken.for_user(user)
         

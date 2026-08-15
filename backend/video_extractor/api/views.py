@@ -2,20 +2,26 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from video_extractor.core.models import CapturedImage, VideoUpload, FolderConfig
 from video_extractor.core.serializers import CapturedImageSerializer, VideoUploadSerializer
 from video_extractor.core.utils.ffmpeg_utils import get_video_info
 import os
+import shutil
 from django.core.files.storage import default_storage
 from django.conf import settings
-
+from django.http import FileResponse, Http404
+try:
+    from PIL import Image
+    HAS_PILLOW = True
+except ImportError:
+    HAS_PILLOW = False
 
 class ImageViewSet(viewsets.ModelViewSet):
     """Captured images API"""
     serializer_class = CapturedImageSerializer
     permission_classes = [IsAuthenticated]
-    parser_classes = (MultiPartParser, FormParser)
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
     
     def get_queryset(self):
         return CapturedImage.objects.filter(user=self.request.user)
@@ -39,15 +45,41 @@ class ImageViewSet(viewsets.ModelViewSet):
             
             # Save the frame image to media/frames/<user_id>/<video_id>/
             frame_dir = f'frames/{request.user.id}/{video_id}'
-            # Generate a unique filename using timestamp
+            # Generate a unique filename using timestamp + resolution for easy identification
             timestamp_str = f"{timestamp:.3f}".replace('.', '_')
-            filename = f'frame_{timestamp_str}.png'
+            res_str = f"{width}x{height}" if width and height else 'native'
+            filename = f'frame_{timestamp_str}_{res_str}.png'
             file_path = default_storage.save(
                 f'{frame_dir}/{filename}',
                 image_file
             )
             
             full_path = os.path.join(settings.MEDIA_ROOT, file_path)
+
+            # ── Re-save as maximum-quality lossless PNG using Pillow ──────────
+            # This ensures the image is stored with the highest fidelity,
+            # regardless of how the browser encoded the blob.
+            if HAS_PILLOW:
+                try:
+                    img = Image.open(full_path)
+                    # Convert to RGB if needed (removes alpha for JPEG compat)
+                    if img.mode not in ('RGB', 'RGBA', 'L'):
+                        img = img.convert('RGB')
+                    # Save as PNG with compression_level=0 for fastest/largest
+                    # but completely lossless. optimize=False to skip slow analysis.
+                    img.save(
+                        full_path,
+                        format='PNG',
+                        compress_level=0,   # 0 = no compression, max fidelity, fastest
+                        optimize=False,
+                    )
+                    # Update width/height from actual image if not provided
+                    if width == 0 or height == 0:
+                        width, height = img.size
+                    img.close()
+                except Exception as pil_err:
+                    print(f"Pillow re-save skipped: {pil_err}")
+
             file_size = os.path.getsize(full_path)
             
             # Run blur detection
@@ -59,18 +91,17 @@ class ImageViewSet(viewsets.ModelViewSet):
             except Exception as blur_err:
                 print(f"Blur detection failed: {blur_err}")
             
-            # Build the URL for serving the image
-            image_url = f'/media/{file_path.replace(os.sep, "/")}'
-            
-            # Create CapturedImage record
+            # Create CapturedImage record (stored in server gallery only)
             captured = CapturedImage.objects.create(
                 user=request.user,
+                config=None,
                 image_path=file_path,
-                image_url=image_url,
+                image_url='',
                 source_video=video_name,
                 timestamp=timestamp,
                 is_blurred=is_blurred,
                 blur_score=blur_score,
+                is_exported=False,
                 file_size=file_size,
                 width=width,
                 height=height,
@@ -119,11 +150,98 @@ class ImageViewSet(viewsets.ModelViewSet):
             'clear': clear
         })
 
+    @action(detail=False, methods=['post'])
+    def export_to_folder(self, request):
+        """Export selected images to the user's configured PC folder"""
+        try:
+            image_ids = request.data.get('image_ids', [])
+            if not image_ids:
+                return Response(
+                    {'error': 'No images selected for export'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the user's active folder config
+            active_config = FolderConfig.objects.filter(user=request.user, is_active=True).first()
+            if active_config and active_config.folder_path:
+                folder_path = active_config.folder_path
+            else:
+                # Default: save to Desktop/FrameExtractor_Exports
+                desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+                if not os.path.isdir(desktop):
+                    desktop = os.path.expanduser('~')
+                folder_path = os.path.join(desktop, 'FrameExtractor_Exports')
+
+            # Validate that the path is absolute — a relative name like "MyPhotos"
+            # would be created inside the backend working directory by mistake.
+            if not os.path.isabs(folder_path):
+                return Response(
+                    {'error': f'The configured output folder "{folder_path}" is not an absolute path. '
+                              f'Please go to Setup and set a full path like "D:\\\\MyPhotos" or "C:\\\\Users\\\\You\\\\Frames".'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            os.makedirs(folder_path, exist_ok=True)
+            
+            images = CapturedImage.objects.filter(id__in=image_ids, user=request.user)
+            exported_count = 0
+            errors = []
+            
+            for image in images:
+                try:
+                    # Resolve the source path
+                    src_path = image.image_path
+                    if not os.path.isabs(src_path):
+                        src_path = os.path.join(settings.MEDIA_ROOT, src_path)
+                    
+                    if not os.path.exists(src_path):
+                        errors.append(f'Source file not found for image {image.id}')
+                        continue
+                    
+                    dest_path = os.path.join(folder_path, os.path.basename(src_path))
+                    shutil.copy2(src_path, dest_path)
+                    
+                    image.is_exported = True
+                    image.save()
+                    exported_count += 1
+                except Exception as copy_err:
+                    errors.append(f'Failed to export image {image.id}: {str(copy_err)}')
+            
+            return Response({
+                'exported': exported_count,
+                'total': len(image_ids),
+                'folder_path': folder_path,
+                'errors': errors,
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=True, methods=['get'])
+    def serve(self, request, pk=None):
+        """Serve the image file from its absolute or relative path"""
+        try:
+            image = self.get_object()
+            path = image.image_path
+            if not os.path.isabs(path):
+                path = os.path.join(settings.MEDIA_ROOT, path)
+                
+            if not os.path.exists(path):
+                raise Http404("Image file not found")
+                
+            return FileResponse(open(path, 'rb'), content_type='image/png')
+        except CapturedImage.DoesNotExist:
+            raise Http404("Image not found")
+
 
 class VideoViewSet(viewsets.ModelViewSet):
     """Video uploads API"""
     serializer_class = VideoUploadSerializer
-    parser_classes = (MultiPartParser, FormParser)
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
@@ -270,7 +388,7 @@ class VideoViewSet(viewsets.ModelViewSet):
             
             print(f"Extracted {len(frame_paths)} frames")
             
-            # Process each frame - detect blur, get metadata, save to DB
+            # Process each frame - detect blur, get metadata, save to DB (gallery only)
             frames_created = 0
             for i, frame_path in enumerate(frame_paths):
                 try:
@@ -279,29 +397,31 @@ class VideoViewSet(viewsets.ModelViewSet):
                     
                     # Get image info
                     img_info = get_image_info(frame_path)
-                    file_size = os.path.getsize(frame_path)
+                    
+                    # Always use relative media path (gallery only, no PC export)
+                    final_image_path = os.path.relpath(frame_path, settings.MEDIA_ROOT)
+                    
+                    file_size = os.path.getsize(os.path.join(settings.MEDIA_ROOT, final_image_path))
                     
                     # Detect blur
                     is_blurred = False
                     blur_score = None
                     try:
-                        is_blurred, blur_score = detect_blur(frame_path)
+                        is_blurred, blur_score = detect_blur(os.path.join(settings.MEDIA_ROOT, final_image_path))
                     except Exception as blur_err:
                         print(f"Blur detection failed for frame {i}: {blur_err}")
                     
-                    # Build the relative media path and URL
-                    rel_path = os.path.relpath(frame_path, settings.MEDIA_ROOT)
-                    image_url = f'/media/{rel_path.replace(os.sep, "/")}'
-                    
-                    # Create CapturedImage record
-                    CapturedImage.objects.create(
+                    # Create CapturedImage record (gallery only, not exported)
+                    captured = CapturedImage.objects.create(
                         user=user,
-                        image_path=rel_path,
-                        image_url=image_url,
+                        config=None,
+                        image_path=final_image_path,
+                        image_url='',
                         source_video=video.video_name,
                         timestamp=timestamp,
                         is_blurred=is_blurred,
                         blur_score=blur_score,
+                        is_exported=False,
                         file_size=file_size,
                         width=img_info['width'],
                         height=img_info['height'],
@@ -394,4 +514,74 @@ class ConfigViewSet(viewsets.ViewSet):
             return Response(
                 {'error': 'Configuration not found'},
                 status=status.HTTP_404_NOT_FOUND
+            )
+
+    @action(detail=False, methods=['get'])
+    def browse_folders(self, request):
+        """Browse directories on the local filesystem for folder selection.
+        
+        Query params:
+            path: The directory to list. If empty, returns available drives (Windows) or root.
+        """
+        import platform
+        import string
+
+        requested_path = request.query_params.get('path', '')
+
+        try:
+            # If no path given, return root entries (drives on Windows, / on Unix)
+            if not requested_path:
+                if platform.system() == 'Windows':
+                    drives = []
+                    for letter in string.ascii_uppercase:
+                        drive = f'{letter}:\\'
+                        if os.path.exists(drive):
+                            drives.append({
+                                'name': f'{letter}:',
+                                'path': drive,
+                                'is_dir': True,
+                            })
+                    return Response({
+                        'current_path': '',
+                        'parent_path': None,
+                        'entries': drives,
+                    })
+                else:
+                    requested_path = '/'
+
+            # Normalise and ensure the path exists
+            requested_path = os.path.normpath(requested_path)
+            if not os.path.isdir(requested_path):
+                return Response(
+                    {'error': f'Directory not found: {requested_path}'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # List only subdirectories (skip hidden/system dirs)
+            entries = []
+            try:
+                for entry in sorted(os.listdir(requested_path)):
+                    full = os.path.join(requested_path, entry)
+                    if os.path.isdir(full) and not entry.startswith('.'):
+                        entries.append({
+                            'name': entry,
+                            'path': full,
+                            'is_dir': True,
+                        })
+            except PermissionError:
+                pass  # silently skip dirs we can't read
+
+            parent = os.path.dirname(requested_path)
+            if parent == requested_path:
+                parent = None  # at root
+
+            return Response({
+                'current_path': requested_path,
+                'parent_path': parent,
+                'entries': entries,
+            })
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
             )

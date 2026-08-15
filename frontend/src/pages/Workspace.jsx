@@ -89,6 +89,37 @@ export default function Workspace() {
     } catch (err) { console.error(err) }
   }
 
+  const syncToLocalDirectory = async (videoObj) => {
+    try {
+      const { get } = await import('idb-keyval');
+      const dirHandle = await get('outputDirectoryHandle');
+      if (!dirHandle) return;
+
+      const res = await imageApi.filterByVideo(videoObj.video_name);
+      const images = res.data;
+      if (!images || images.length === 0) return;
+
+      for (const img of images) {
+        try {
+          // Fetch blob using axios so headers/base URL are applied correctly
+          const { default: api } = await import('../services/api');
+          const blobRes = await api.get(img.image, { responseType: 'blob' });
+          const blob = blobRes.data;
+          
+          const filename = img.file_name || `frame_${img.id}.png`;
+          const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+        } catch (imgErr) {
+          console.error(`Failed to sync ${img.file_name}:`, imgErr);
+        }
+      }
+    } catch (e) {
+      console.error("Local sync failed", e);
+    }
+  }
+
   const startProcessing = async () => {
     if (!video) return
     setStage('processing')
@@ -117,6 +148,11 @@ export default function Workspace() {
             setProcessingProgress(100)
             setProcessingStage(4)
             setTimeout(() => setStage('completed'), 600)
+            
+            if (updated.status === 'completed') {
+              // Trigger sync in background
+              syncToLocalDirectory(updated);
+            }
           }
         } catch (_) {}
       }, 2000)
@@ -128,7 +164,29 @@ export default function Workspace() {
 
   const handleCaptureFrame = async (frameData) => {
     try {
+      // 1. Save to backend database
       await imageApi.captureFrame(frameData)
+      
+      // 2. Save directly to local hard drive (if authorized)
+      try {
+        const { get } = await import('idb-keyval');
+        const dirHandle = await get('outputDirectoryHandle');
+        if (dirHandle) {
+          // Format filename: video_name_timestamp.png
+          const cleanName = (frameData.videoName || 'video').replace(/[^a-z0-9]/gi, '_').toLowerCase()
+          const filename = `${cleanName}_${Math.round(frameData.timestamp * 1000)}.${frameData.extension || 'png'}`
+          
+          const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(frameData.blob);
+          await writable.close();
+          console.log(`Saved locally: ${filename}`);
+        }
+      } catch (localSaveErr) {
+        console.error('Failed to save to local folder:', localSaveErr);
+        // We don't throw here, because backend save succeeded
+      }
+
       // Update the video's frame count in the sidebar
       if (video) {
         setVideos(prev => prev.map(v =>

@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useContext } from 'react'
 import { ConfigContext } from '../../context/ConfigContext'
+import { BACKEND_URL } from '../../services/api'
 import { Camera, CheckCircle2, Video } from 'lucide-react'
 
 const NATIVE_EXTENSIONS = new Set(['.mp4', '.webm', '.ogg', '.ogv'])
@@ -28,14 +29,14 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
     const ext = getExtension(video.video_name || '')
 
     if (NATIVE_EXTENSIONS.has(ext)) {
-      setVideoSrc(video.video_url || `/media/${video.video_path}`)
+      setVideoSrc(video.video_url || `${BACKEND_URL}/media/${video.video_path}`)
       setError(null)
       setLoading(false)
     } else {
       setLoading(true)
       setError(null)
       const token = localStorage.getItem('access_token')
-      fetch(video.stream_url || `/stream/${video.id}/`, {
+      fetch(video.stream_url || `${BACKEND_URL}/stream/${video.id}/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
         .then(res => {

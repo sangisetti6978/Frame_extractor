@@ -135,10 +135,23 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
             <video
               ref={videoRef}
               style={{ width: '100%', display: 'block' }}
-              src={videoSrc}
+              src={videoSrc?.startsWith('http:') && window.location.protocol === 'https:' ? videoSrc.replace('http:', 'https:') : videoSrc}
               onPause={() => setIsPlaying(false)}
               onPlay={() => setIsPlaying(true)}
               onLoadedMetadata={handleVideoMetadata}
+              onError={(e) => {
+                console.error("Video element error:", e.target.error);
+                let errStr = "Unknown error";
+                if (e.target.error) {
+                  switch (e.target.error.code) {
+                    case 1: errStr = "Aborted"; break;
+                    case 2: errStr = "Network error - CORS or Mixed Content issue"; break;
+                    case 3: errStr = "Decode error - Corrupted file"; break;
+                    case 4: errStr = "Format not supported or file not found"; break;
+                  }
+                }
+                setError(`Failed to play video: ${errStr}.`);
+              }}
               controls
               crossOrigin="anonymous"
             />

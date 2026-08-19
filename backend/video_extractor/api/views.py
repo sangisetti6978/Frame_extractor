@@ -152,7 +152,7 @@ class ImageViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def export_to_folder(self, request):
-        """Export selected images to the user's configured PC folder"""
+        """Mark selected images as exported. The frontend handles actual file saving."""
         try:
             image_ids = request.data.get('image_ids', [])
             if not image_ids:
@@ -161,57 +161,19 @@ class ImageViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Get the user's active folder config
-            active_config = FolderConfig.objects.filter(user=request.user, is_active=True).first()
-            if active_config and active_config.folder_path:
-                folder_path = active_config.folder_path
-            else:
-                # Default: save to Desktop/FrameExtractor_Exports
-                desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
-                if not os.path.isdir(desktop):
-                    desktop = os.path.expanduser('~')
-                folder_path = os.path.join(desktop, 'FrameExtractor_Exports')
-
-            # Validate that the path is absolute — a relative name like "MyPhotos"
-            # would be created inside the backend working directory by mistake.
-            if not os.path.isabs(folder_path):
-                return Response(
-                    {'error': f'The configured output folder "{folder_path}" is not an absolute path. '
-                              f'Please go to Setup and set a full path like "D:\\\\MyPhotos" or "C:\\\\Users\\\\You\\\\Frames".'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            os.makedirs(folder_path, exist_ok=True)
-            
             images = CapturedImage.objects.filter(id__in=image_ids, user=request.user)
             exported_count = 0
-            errors = []
             
             for image in images:
-                try:
-                    # Resolve the source path
-                    src_path = image.image_path
-                    if not os.path.isabs(src_path):
-                        src_path = os.path.join(settings.MEDIA_ROOT, src_path)
-                    
-                    if not os.path.exists(src_path):
-                        errors.append(f'Source file not found for image {image.id}')
-                        continue
-                    
-                    dest_path = os.path.join(folder_path, os.path.basename(src_path))
-                    shutil.copy2(src_path, dest_path)
-                    
-                    image.is_exported = True
-                    image.save()
-                    exported_count += 1
-                except Exception as copy_err:
-                    errors.append(f'Failed to export image {image.id}: {str(copy_err)}')
+                image.is_exported = True
+                image.save()
+                exported_count += 1
             
             return Response({
                 'exported': exported_count,
                 'total': len(image_ids),
-                'folder_path': folder_path,
-                'errors': errors,
+                'folder_path': 'Local PC Folder',
+                'errors': [],
             }, status=status.HTTP_200_OK)
         except Exception as e:
             import traceback

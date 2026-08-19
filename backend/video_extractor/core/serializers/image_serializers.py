@@ -11,10 +11,13 @@ class CapturedImageSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
     def get_image_url(self, obj):
-        # Serve images directly from the media directory
-        if obj.image_path and not obj.image_path.startswith('/'):
-            return f'/media/{obj.image_path}'
-        return obj.image_path or ''
+        url = obj.image_path
+        if url and not url.startswith('/'):
+            url = f'/media/{url}'
+        request = self.context.get('request')
+        if request is not None and url:
+            return request.build_absolute_uri(url)
+        return url or ''
 
 
 class VideoUploadSerializer(serializers.ModelSerializer):
@@ -27,7 +30,15 @@ class VideoUploadSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def get_video_url(self, obj):
-        return f'/media/{obj.video_path}'
+        url = f'/media/{obj.video_path}'
+        request = self.context.get('request')
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url
     
     def get_stream_url(self, obj):
-        return f'/stream/{obj.id}/'
+        url = f'/stream/{obj.id}/'
+        request = self.context.get('request')
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url

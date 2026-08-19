@@ -39,8 +39,15 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
       fetch(video.stream_url || `${BACKEND_URL}/stream/${video.id}/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
-        .then(res => {
-          if (!res.ok) throw new Error(`Stream failed: ${res.status}`)
+        .then(async res => {
+          if (!res.ok) {
+            let errorMsg = `HTTP ${res.status}`
+            try {
+              const text = await res.text()
+              errorMsg = text.substring(0, 100)
+            } catch (e) {}
+            throw new Error(errorMsg)
+          }
           return res.blob()
         })
         .then(blob => {
@@ -49,7 +56,7 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
         })
         .catch(err => {
           console.error('Stream error:', err)
-          setError('Failed to load video. It may still be transcoding — please wait and try again.')
+          setError(`Failed to load video: ${err.message}. Please wait and try again.`)
           setLoading(false)
         })
     }

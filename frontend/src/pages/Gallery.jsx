@@ -85,9 +85,57 @@ export default function Gallery() {
   const handleExport = async (ids) => {
     setExporting(true)
     try {
-      const response = await imageApi.exportToFolder(ids)
-      const { exported, folder_path } = response.data
-      if (exported > 0) {
+      let dirHandle;
+      try {
+        const { get, set } = await import('idb-keyval');
+        dirHandle = await get('outputDirectoryHandle');
+        if (!dirHandle) {
+          dirHandle = await window.showDirectoryPicker();
+          await set('outputDirectoryHandle', dirHandle);
+        }
+        // Verify permission, request if needed
+        const options = { mode: 'readwrite' };
+        if ((await dirHandle.queryPermission(options)) !== 'granted') {
+          if ((await dirHandle.requestPermission(options)) !== 'granted') {
+            throw new Error('Permission not granted');
+          }
+        }
+      } catch (err) {
+        console.error("Directory picker error:", err);
+        alert("Please select a folder and grant permission to save the images.");
+        setExporting(false);
+        return;
+      }
+      
+      const imagesToExport = images.filter(img => ids.includes(img.id));
+      let exportedCount = 0;
+      
+      const { default: api } = await import('../services/api');
+      
+      for (const img of imagesToExport) {
+        try {
+          const blobRes = await api.get(img.image_url, { responseType: 'blob' });
+          const blob = blobRes.data;
+          
+          const filename = img.file_name || `frame_${img.timestamp.toFixed(3)}s_${img.id}.png`;
+          const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          exportedCount++;
+        } catch (imgErr) {
+          console.error(`Failed to sync ${img.id}:`, imgErr);
+        }
+      }
+
+      // Tell backend to mark as exported
+      try {
+        await imageApi.exportToFolder(ids)
+      } catch (e) {
+        console.error('Failed to update export status on backend', e)
+      }
+
+      if (exportedCount > 0) {
         setImages(prev => prev.map(img =>
           ids.includes(img.id) ? { ...img, is_exported: true } : img
         ))
@@ -95,10 +143,10 @@ export default function Gallery() {
           setViewImage(prev => ({ ...prev, is_exported: true }))
         }
         setSelectedIds(new Set())
-        alert(`✅ ${exported} frame(s) saved to:\n${folder_path}`)
+        alert(`✅ ${exportedCount} frame(s) saved locally!`)
       }
     } catch (err) {
-      const msg = err.response?.data?.error || 'Export failed'
+      const msg = err.response?.data?.error || err.message || 'Export failed'
       alert(`❌ ${msg}`)
       console.error('Export failed:', err)
     } finally {

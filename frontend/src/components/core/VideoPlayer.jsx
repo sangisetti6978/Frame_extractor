@@ -30,38 +30,14 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
 
     if (NATIVE_EXTENSIONS.has(ext)) {
       setVideoSrc(video.video_url || `${BACKEND_URL}/media/${video.video_path}`)
-      setError(null)
-      setLoading(false)
     } else {
-      setLoading(true)
-      setError(null)
-      const token = localStorage.getItem('access_token')
-      fetch(video.stream_url || `${BACKEND_URL}/stream/${video.id}/`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-        .then(async res => {
-          if (!res.ok) {
-            let errorMsg = `HTTP ${res.status}`
-            try {
-              const text = await res.text()
-              errorMsg = text.substring(0, 100)
-            } catch (e) {}
-            throw new Error(errorMsg)
-          }
-          return res.blob()
-        })
-        .then(blob => {
-          setVideoSrc(URL.createObjectURL(blob))
-          setLoading(false)
-        })
-        .catch(err => {
-          console.error('Stream error:', err)
-          setError(`Failed to load video: ${err.message}. Please wait and try again.`)
-          setLoading(false)
-        })
+      setVideoSrc(video.stream_url || `${BACKEND_URL}/stream/${video.id}/`)
     }
+    setError(null)
+    setLoading(false)
 
     return () => {
+      // Clean up object URLs if any exist from older code
       if (videoSrc && videoSrc.startsWith('blob:')) URL.revokeObjectURL(videoSrc)
     }
   }, [video?.id])

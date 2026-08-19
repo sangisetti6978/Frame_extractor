@@ -29,13 +29,14 @@ def _transcode_video(input_path, output_path):
     cmd = [
         ffmpeg_cmd,
         '-i', input_path,
+        '-vf', 'scale=-2:720',  # Scale to 720p to speed up transcoding
         '-c:v', 'libx264',
-        '-preset', 'fast',
-        '-crf', '23',
+        '-preset', 'ultrafast', # Maximize speed to avoid proxy timeouts
+        '-crf', '28',           # Lower quality for preview is fine
         '-c:a', 'aac',
         '-b:a', '128k',
-        '-movflags', '+faststart',  # Enable progressive download
-        '-y',  # Overwrite output
+        '-movflags', '+faststart',
+        '-y',
         output_path
     ]
     

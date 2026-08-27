@@ -7,7 +7,8 @@ import { Camera, CheckCircle2, Video, AlertTriangle } from 'lucide-react'
 const NATIVE_EXTENSIONS = new Set(['.mp4', '.webm', '.ogg', '.ogv'])
 
 // How often to poll the backend for a completed transcode (ms)
-const TRANSCODE_POLL_INTERVAL = 3000
+// Keep fast — transcoding was already kicked off during upload
+const TRANSCODE_POLL_INTERVAL = 1500
 
 function getExtension(filename) {
   const idx = filename.lastIndexOf('.')
@@ -101,8 +102,8 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
           setStatus('error')
         }
       } catch (err) {
-        // If backend is completely unreachable after a few attempts
-        if (tick >= 4) {
+        // If backend is completely unreachable after 3 attempts (~4.5s)
+        if (tick >= 3) {
           clearInterval(pollRef.current)
           pollRef.current = null
           setErrorMsg(

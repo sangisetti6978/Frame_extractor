@@ -406,6 +406,58 @@ class VideoViewSet(viewsets.ModelViewSet):
             video.status = 'failed'
             video.save()
 
+    def _do_transcode_background(self, video_id, input_path):
+        """
+        Pre-transcode a non-native video to MP4 in the background immediately
+        after upload. Writes a .lock sentinel so stream_views.py knows
+        transcoding is running and waits instead of starting a second FFmpeg.
+        """
+        import subprocess
+        from video_extractor.core.utils.ffmpeg_utils import _get_ffmpeg_cmd
+
+        base, _ = os.path.splitext(input_path)
+        output_path = base + '_transcoded.mp4'
+        lock_path = output_path + '.lock'
+
+        if os.path.exists(output_path):
+            print(f"[Pre-transcode] Already done: {output_path}")
+            return
+
+        if os.path.exists(lock_path):
+            print(f"[Pre-transcode] Another process is already transcoding, skipping")
+            return
+
+        print(f"[Pre-transcode] Starting: {input_path} -> {output_path}")
+        try:
+            # Write lock so stream_views.py won't start a second parallel FFmpeg
+            open(lock_path, 'w').close()
+
+            ffmpeg_cmd = _get_ffmpeg_cmd()
+            cmd = [
+                ffmpeg_cmd,
+                '-i', input_path,
+                '-vf', 'scale=-2:720',      # 720p — fast encode, good preview quality
+                '-c:v', 'libx264',
+                '-preset', 'ultrafast',     # Fastest possible encode
+                '-crf', '28',               # Acceptable preview quality
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-movflags', '+faststart',  # Progressive streaming (play before fully downloaded)
+                '-y',
+                output_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if result.returncode == 0:
+                print(f"[Pre-transcode] Done: {output_path}")
+            else:
+                print(f"[Pre-transcode] FFmpeg error for video {video_id}: {result.stderr[-300:]}")
+        except Exception as e:
+            print(f"[Pre-transcode] Failed for video {video_id}: {e}")
+        finally:
+            # Always remove lock — success or failure
+            if os.path.exists(lock_path):
+                os.remove(lock_path)
+
 
 class ConfigViewSet(viewsets.ViewSet):
     """Configuration API"""

@@ -53,40 +53,60 @@ def stream_video(request, video_id):
     """
     Stream a video file. If the format is not browser-compatible,
     transcode it to MP4 first (cached for future requests).
+
+    If a background pre-transcode (started during upload) is already running,
+    wait for it to finish instead of starting a second FFmpeg process.
     """
     try:
-        # Check token if provided, but don't strictly enforce for native streaming
-        # to simplify VideoPlayer.jsx
         video = VideoUpload.objects.get(id=video_id)
     except VideoUpload.DoesNotExist:
         return HttpResponseNotFound('Video not found')
-    
+
     file_path = os.path.join(str(settings.MEDIA_ROOT), str(video.video_path))
-    
+
     if not os.path.exists(file_path):
         return HttpResponseNotFound('Video file not found on disk')
-    
+
     _, ext = os.path.splitext(file_path)
     ext_lower = ext.lower()
-    
+
     # If it's a browser-native format, serve directly
     if ext_lower in BROWSER_NATIVE_FORMATS:
         response = FileResponse(open(file_path, 'rb'), content_type='video/mp4')
         response['Content-Disposition'] = f'inline; filename="{video.video_name}"'
         return response
-    
-    # Need transcoding - check if we already have a cached transcoded version
+
+    # Non-native — check if transcoded version is ready
     transcoded_path = _get_transcoded_path(file_path)
-    
+    lock_path = transcoded_path + '.lock'
+
     if not os.path.exists(transcoded_path):
-        try:
-            print(f"Transcoding {file_path} -> {transcoded_path}")
-            _transcode_video(file_path, transcoded_path)
-            print(f"Transcoding complete: {transcoded_path}")
-        except Exception as e:
-            print(f"Transcoding failed: {e}")
-            return HttpResponseNotFound(f'Failed to transcode video: {str(e)}')
-    
+        # If a background pre-transcode is running, wait for it (poll every 2s, up to 10min)
+        if os.path.exists(lock_path):
+            import time
+            waited = 0
+            while os.path.exists(lock_path) and waited < 600:
+                time.sleep(2)
+                waited += 2
+        
+        # If still not done, kick off transcoding ourselves
+        if not os.path.exists(transcoded_path):
+            try:
+                # Write lock so parallel requests don't double-transcode
+                open(lock_path, 'w').close()
+                print(f"Transcoding {file_path} -> {transcoded_path}")
+                _transcode_video(file_path, transcoded_path)
+                print(f"Transcoding complete: {transcoded_path}")
+            except Exception as e:
+                print(f"Transcoding failed: {e}")
+                if os.path.exists(lock_path):
+                    os.remove(lock_path)
+                return HttpResponseNotFound(f'Failed to transcode video: {str(e)}')
+            finally:
+                if os.path.exists(lock_path):
+                    os.remove(lock_path)
+
     response = FileResponse(open(transcoded_path, 'rb'), content_type='video/mp4')
     response['Content-Disposition'] = f'inline; filename="{os.path.splitext(video.video_name)[0]}.mp4"'
     return response
+

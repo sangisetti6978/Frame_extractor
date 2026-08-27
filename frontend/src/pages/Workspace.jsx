@@ -67,12 +67,25 @@ export default function Workspace() {
         setUploadProgress(Math.round((e.loaded / e.total) * 100))
       })
       const newVideo = response.data
+      // Show video immediately — server responds before FFprobe/transcode finish
       setVideos(prev => [newVideo, ...prev])
       setVideo(newVideo)
       setStage('settings')
       setShowUploadZone(false)
+
+      // Poll once after 2.5s to pick up the real metadata filled by the background thread
+      setTimeout(async () => {
+        try {
+          const refreshed = await videoApi.getVideo(newVideo.id)
+          const updated = refreshed.data
+          setVideos(prev => prev.map(v => v.id === updated.id ? updated : v))
+          setVideo(prev => prev?.id === updated.id ? updated : prev)
+        } catch (_) { /* best-effort */ }
+      }, 2500)
     } catch (err) {
       console.error(err)
+      const errorMsg = err.response?.data?.error || err.message || 'Unknown error'
+      alert(`Upload failed: ${errorMsg}`)
     } finally {
       setUploading(false)
       setUploadProgress(0)

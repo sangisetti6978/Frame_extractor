@@ -1,169 +1,68 @@
-import { useRef, useState, useEffect, useContext, useCallback } from 'react'
+import { useRef, useState, useEffect, useContext } from 'react'
 import { ConfigContext } from '../../context/ConfigContext'
-import api, { BACKEND_URL } from '../../services/api'
+import { BACKEND_URL } from '../../services/api'
 import { Camera, CheckCircle2, Video, AlertTriangle } from 'lucide-react'
 
-// Formats the browser can play natively without transcoding
+// Formats the browser can play natively — no server transcoding needed
 const NATIVE_EXTENSIONS = new Set(['.mp4', '.webm', '.ogg', '.ogv'])
-
-// How often to poll the backend for a completed transcode (ms)
-// Keep fast — transcoding was already kicked off during upload
-const TRANSCODE_POLL_INTERVAL = 1500
 
 function getExtension(filename) {
   const idx = filename.lastIndexOf('.')
   return idx >= 0 ? filename.substring(idx).toLowerCase() : ''
 }
 
-/**
- * Resolve the playable URL for a video object.
- * Returns { url, needsTranscoding } where needsTranscoding=true means
- * the backend must FFmpeg-transcode the file first.
- */
-function resolveVideoUrl(video) {
-  if (!video) return { url: null, needsTranscoding: false }
-
-  const ext = getExtension(video.video_name || '')
-  const isNative = NATIVE_EXTENSIONS.has(ext)
-
-  // Backend already provided a ready-to-play URL (transcoded or native)
-  if (video.stream_url) {
-    const url = video.stream_url.startsWith('http')
-      ? video.stream_url
-      : `${BACKEND_URL}${video.stream_url}`
-    return { url, needsTranscoding: false }
-  }
-
-  if (isNative) {
-    // Serve the original file directly
-    const url = video.video_url || `${BACKEND_URL}/media/${video.video_path}`
-    return { url, needsTranscoding: false }
-  }
-
-  // Non-native format — needs backend transcoding
-  // The stream endpoint triggers FFmpeg and returns transcoded MP4
-  const streamUrl = `${BACKEND_URL}/stream/${video.id}/`
-  return { url: streamUrl, needsTranscoding: true }
-}
-
 export default function VideoPlayer({ video, onCaptureFrame }) {
   const { config } = useContext(ConfigContext)
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
-  const pollRef = useRef(null)
 
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [capturing, setCapturing] = useState(false)
+  const [isPlaying, setIsPlaying]       = useState(false)
+  const [capturing, setCapturing]       = useState(false)
   const [captureSuccess, setCaptureSuccess] = useState(false)
-  const [showFlash, setShowFlash] = useState(false)
+  const [showFlash, setShowFlash]       = useState(false)
+  const [buffering, setBuffering]       = useState(true)   // waiting for first bytes
+  const [error, setError]               = useState(null)
+  const [resolution, setResolution]     = useState({ w: 0, h: 0 })
 
-  // 'transcoding'  — waiting for FFmpeg on the backend
-  // 'buffering'    — video element is loading/buffering
-  // 'ready'        — playing fine
-  // 'error'        — unrecoverable error
-  const [status, setStatus] = useState('buffering')
-  const [errorMsg, setErrorMsg] = useState(null)
-  const [videoSrc, setVideoSrc] = useState(null)
-  const [resolution, setResolution] = useState({ w: 0, h: 0 })
-  const [transcodeProgress, setTranscodeProgress] = useState(0)
+  // Resolve the playable URL whenever the video changes
+  const videoSrc = (() => {
+    if (!video) return null
+    // Prefer the backend stream URL — it handles native files, cached transcodes,
+    // AND live FFmpeg pipe streaming all in one endpoint.
+    if (video.stream_url) {
+      const url = video.stream_url.startsWith('http')
+        ? video.stream_url
+        : `${BACKEND_URL}${video.stream_url}`
+      // Upgrade http → https on HTTPS pages to avoid mixed-content block
+      return window.location.protocol === 'https:' && url.startsWith('http:')
+        ? url.replace('http:', 'https:')
+        : url
+    }
+    // Fallback: native formats can be served directly
+    const ext = getExtension(video.video_name || '')
+    if (NATIVE_EXTENSIONS.has(ext)) {
+      const raw = video.video_url || `${BACKEND_URL}/media/${video.video_path}`
+      return window.location.protocol === 'https:' && raw.startsWith('http:')
+        ? raw.replace('http:', 'https:')
+        : raw
+    }
+    // Non-native with no stream_url yet — construct stream URL manually
+    return `${BACKEND_URL}/stream/${video.id}/`
+  })()
 
-  // Poll backend until transcoding completes (stream_url appears)
-  const startTranscodePolling = useCallback((videoObj) => {
-    let tick = 0
-    // Immediately trigger the transcode by fetching the stream endpoint once
-    fetch(`${BACKEND_URL}/stream/${videoObj.id}/`, { method: 'GET' }).catch(() => {})
-
-    pollRef.current = setInterval(async () => {
-      tick++
-      // Animate a fake progress bar (0→90% over time)
-      setTranscodeProgress(prev => Math.min(prev + (90 - prev) * 0.08, 90))
-
-      try {
-        const res = await api.get(`/videos/${videoObj.id}/`)
-        const updated = res.data
-
-        if (updated.stream_url) {
-          // Transcoding done!
-          clearInterval(pollRef.current)
-          pollRef.current = null
-          setTranscodeProgress(100)
-          const fullUrl = updated.stream_url.startsWith('http')
-            ? updated.stream_url
-            : `${BACKEND_URL}${updated.stream_url}`
-          setVideoSrc(fullUrl)
-          setStatus('buffering')
-        } else if (tick >= 1 && !BACKEND_URL) {
-          // No backend configured at all — fail early with helpful message
-          clearInterval(pollRef.current)
-          pollRef.current = null
-          setErrorMsg(
-            `No backend configured. Set VITE_API_URL to your backend URL in Vercel environment variables (e.g. https://your-backend.onrender.com/api).`
-          )
-          setStatus('error')
-        }
-      } catch (err) {
-        // If backend is completely unreachable after 3 attempts (~4.5s)
-        if (tick >= 3) {
-          clearInterval(pollRef.current)
-          pollRef.current = null
-          setErrorMsg(
-            `Backend unreachable. The .${getExtension(videoObj.video_name || '').replace('.', '')} format requires server-side transcoding. ` +
-            `Ensure VITE_API_URL is set to your backend URL in Vercel settings.`
-          )
-          setStatus('error')
-        }
-      }
-    }, TRANSCODE_POLL_INTERVAL)
-  }, [])
-
-  // Main effect: resolve URL when video changes
+  // Reset state when the selected video changes
   useEffect(() => {
-    // Clear any active polling
-    if (pollRef.current) {
-      clearInterval(pollRef.current)
-      pollRef.current = null
-    }
-
-    if (!video) {
-      setVideoSrc(null)
-      setStatus('buffering')
-      setErrorMsg(null)
-      setResolution({ w: 0, h: 0 })
-      return
-    }
-
-    setErrorMsg(null)
+    setBuffering(true)
+    setError(null)
     setResolution({ w: 0, h: 0 })
-    setTranscodeProgress(0)
+    setIsPlaying(false)
+  }, [video?.id])
 
-    const { url, needsTranscoding } = resolveVideoUrl(video)
-
-    if (needsTranscoding) {
-      // Don't set videoSrc yet — show transcoding UI while polling
-      setVideoSrc(null)
-      setStatus('transcoding')
-      startTranscodePolling(video)
-    } else {
-      setVideoSrc(url)
-      setStatus('buffering')
-    }
-
-    return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-      }
-      // Revoke any blob URLs
-      if (videoSrc && videoSrc.startsWith('blob:')) URL.revokeObjectURL(videoSrc)
-    }
-  }, [video?.id]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Auto-clear capture success badge
+  // Clear the capture-success badge after 2.5s
   useEffect(() => {
-    if (captureSuccess) {
-      const t = setTimeout(() => setCaptureSuccess(false), 2500)
-      return () => clearTimeout(t)
-    }
+    if (!captureSuccess) return
+    const t = setTimeout(() => setCaptureSuccess(false), 2500)
+    return () => clearTimeout(t)
   }, [captureSuccess])
 
   const handleVideoMetadata = () => {
@@ -172,36 +71,32 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
   }
 
   const handleVideoError = (e) => {
-    console.error('Video element error:', e.target?.error)
     const code = e.target?.error?.code
     let msg = 'Unknown playback error.'
     if (code === 1) msg = 'Playback aborted.'
-    else if (code === 2) msg = 'Network error — possible CORS or mixed-content issue. Check that VITE_API_URL uses HTTPS.'
+    else if (code === 2) msg = 'Network error — possible CORS or mixed-content issue.'
     else if (code === 3) msg = 'Decode error — the file may be corrupted.'
     else if (code === 4) {
       const ext = getExtension(video?.video_name || '').replace('.', '').toUpperCase()
-      msg = `${ext || 'This'} format is not supported by your browser. ` +
-            `The backend should transcode it — check that the backend service is running and VITE_API_URL is correct.`
+      msg = `${ext || 'This'} format could not be played. ` +
+            `Ensure VITE_API_URL points to your running backend (e.g. https://your-backend.onrender.com/api).`
     }
-    setErrorMsg(msg)
-    setStatus('error')
+    setError(msg)
+    setBuffering(false)
   }
 
   const handleCaptureFrame = async () => {
     const videoEl = videoRef.current
     if (!videoEl || !video || !onCaptureFrame) return
 
-    if (!videoEl.paused) {
-      videoEl.pause()
-      setIsPlaying(false)
-    }
+    if (!videoEl.paused) { videoEl.pause(); setIsPlaying(false) }
 
     setCapturing(true)
     try {
-      const canvas = canvasRef.current
+      const canvas  = canvasRef.current
       const nativeW = videoEl.videoWidth
       const nativeH = videoEl.videoHeight
-      canvas.width = nativeW
+      canvas.width  = nativeW
       canvas.height = nativeH
 
       const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: false })
@@ -209,21 +104,14 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
       ctx.imageSmoothingQuality = 'high'
       ctx.drawImage(videoEl, 0, 0, nativeW, nativeH)
 
-      const blob = await new Promise((resolve, reject) => {
-        canvas.toBlob(
-          (b) => b ? resolve(b) : reject(new Error('Canvas toBlob returned null')),
-          'image/png'
-        )
-      })
+      const blob = await new Promise((res, rej) =>
+        canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob null')), 'image/png')
+      )
 
       await onCaptureFrame({
-        blob,
-        timestamp: videoEl.currentTime,
-        width: nativeW,
-        height: nativeH,
-        videoId: video.id,
-        videoName: video.video_name,
-        extension: 'png',
+        blob, timestamp: videoEl.currentTime,
+        width: nativeW, height: nativeH,
+        videoId: video.id, videoName: video.video_name, extension: 'png',
       })
 
       setShowFlash(true)
@@ -238,84 +126,40 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
 
   if (!video) return null
 
-  const is4K = resolution.w >= 3840
-  const isHD = resolution.w >= 1920
+  const is4K    = resolution.w >= 3840
+  const isHD    = resolution.w >= 1920
   const resLabel = resolution.w > 0
     ? is4K ? '4K UHD' : isHD ? 'Full HD' : `${resolution.w}×${resolution.h}`
     : null
 
-  // Fix mixed-content: upgrade http → https when on https page
-  const safeSrc = videoSrc && window.location.protocol === 'https:' && videoSrc.startsWith('http:')
-    ? videoSrc.replace('http:', 'https:')
-    : videoSrc
-
-  // Append #t=0.001 to force first-frame thumbnail (avoids blank black screen)
-  const finalSrc = safeSrc
-    ? safeSrc + (safeSrc.includes('#') ? '' : '#t=0.001')
-    : null
-
-  const isDisabled = capturing || status === 'transcoding' || status === 'buffering' || status === 'error'
+  const isDisabled = capturing || !!error
 
   return (
     <div>
       <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-      {/* Video area */}
+      {/* ── Video container ── */}
       <div style={{
         position: 'relative', borderRadius: 'var(--radius-lg)', overflow: 'hidden',
         background: '#000', border: '1px solid var(--border-subtle)'
       }}>
 
-        {/* ── Transcoding overlay ── */}
-        {status === 'transcoding' && (
+        {/* Thin animated bar while the first bytes arrive */}
+        {buffering && !error && (
           <div style={{
-            aspectRatio: '16/9', display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: '20px',
-            background: 'var(--bg-primary)'
+            position: 'absolute', top: 0, left: 0, right: 0, height: '3px',
+            zIndex: 10, overflow: 'hidden', background: 'var(--border-strong)'
           }}>
-            {/* Spinning ring */}
-            <div style={{ position: 'relative', width: '64px', height: '64px' }}>
-              <div style={{
-                position: 'absolute', inset: 0, borderRadius: '50%',
-                border: '3px solid var(--border-strong)',
-                borderTopColor: 'var(--accent-cyan)',
-                animation: 'spin 1s linear infinite'
-              }} />
-              <div style={{
-                position: 'absolute', inset: '12px', borderRadius: '50%',
-                border: '2px solid var(--border-subtle)',
-                borderBottomColor: 'var(--accent-purple)',
-                animation: 'spin 1.5s linear infinite reverse'
-              }} />
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <p style={{ color: 'var(--text-primary)', margin: 0, fontWeight: 700, fontSize: '1rem' }}>
-                Transcoding video…
-              </p>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '6px', marginBottom: '16px' }}>
-                Converting {getExtension(video.video_name || '').toUpperCase()} → MP4 via FFmpeg
-              </p>
-              {/* Progress bar */}
-              <div style={{
-                width: '240px', height: '4px', borderRadius: '2px',
-                background: 'var(--border-strong)', overflow: 'hidden', margin: '0 auto'
-              }}>
-                <div style={{
-                  height: '100%', borderRadius: '2px',
-                  background: 'linear-gradient(90deg, var(--accent-cyan), var(--accent-purple))',
-                  width: `${transcodeProgress}%`,
-                  transition: 'width 0.5s ease'
-                }} />
-              </div>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.72rem', marginTop: '10px' }}>
-                This may take 10–60 seconds for large files
-              </p>
-            </div>
+            <div style={{
+              height: '100%',
+              background: 'linear-gradient(90deg, var(--accent-cyan), var(--accent-purple))',
+              animation: 'buffering 1.4s ease-in-out infinite'
+            }} />
           </div>
         )}
 
-        {/* ── Error overlay ── */}
-        {status === 'error' && (
+        {/* Error state */}
+        {error && (
           <div style={{
             aspectRatio: '16/9', display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center', gap: '16px',
@@ -323,82 +167,46 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
           }}>
             <div style={{
               width: '48px', height: '48px', borderRadius: '50%',
-              background: 'rgba(239,68,68,0.15)', display: 'flex',
+              background: 'rgba(239,68,68,0.12)', display: 'flex',
               alignItems: 'center', justifyContent: 'center'
             }}>
               <AlertTriangle size={24} style={{ color: 'var(--danger)' }} />
             </div>
             <p style={{
               color: 'var(--danger)', textAlign: 'center',
-              fontSize: '0.85rem', margin: 0, maxWidth: '420px', lineHeight: 1.6
-            }}>
-              {errorMsg}
-            </p>
+              fontSize: '0.85rem', margin: 0, maxWidth: '400px', lineHeight: 1.6
+            }}>{error}</p>
             <button
-              onClick={() => {
-                setStatus('transcoding')
-                setErrorMsg(null)
-                setTranscodeProgress(0)
-                startTranscodePolling(video)
-              }}
+              onClick={() => { setError(null); setBuffering(true) }}
               style={{
                 padding: '8px 20px', borderRadius: 'var(--radius-md)',
                 background: 'var(--bg-surface)', border: '1px solid var(--border-strong)',
-                color: 'var(--text-secondary)', fontSize: '0.8rem', fontWeight: 600,
-                cursor: 'pointer'
+                color: 'var(--text-secondary)', fontSize: '0.8rem',
+                fontWeight: 600, cursor: 'pointer'
               }}
-            >
-              Retry Transcoding
-            </button>
+            >Retry</button>
           </div>
         )}
 
-        {/* ── Buffering overlay (shown on top of video while it loads) ── */}
-        {status === 'buffering' && !finalSrc && (
-          <div style={{
-            aspectRatio: '16/9', display: 'flex', alignItems: 'center',
-            justifyContent: 'center', background: 'var(--bg-primary)'
-          }}>
-            <div style={{
-              width: '36px', height: '36px', borderRadius: '50%',
-              border: '2px solid var(--border-strong)', borderTopColor: 'var(--accent-cyan)',
-              animation: 'spin 1s linear infinite'
-            }} />
-          </div>
-        )}
-
-        {/* ── The actual video element ── */}
-        {/* Render when we have a src (even while buffering — browser handles it) */}
-        {finalSrc && status !== 'transcoding' && (
+        {/* The video element — always mounted so the browser starts buffering immediately */}
+        {videoSrc && !error && (
           <>
-            {/* Thin buffering bar */}
-            {status === 'buffering' && (
-              <div style={{
-                position: 'absolute', top: 0, left: 0, right: 0, height: '3px',
-                zIndex: 5, overflow: 'hidden', background: 'var(--border-strong)'
-              }}>
-                <div style={{
-                  height: '100%',
-                  background: 'linear-gradient(90deg, var(--accent-cyan), var(--accent-purple))',
-                  animation: 'indeterminate 1.5s ease-in-out infinite'
-                }} />
-              </div>
-            )}
-
             <video
+              key={video.id}          /* remount when video changes */
               ref={videoRef}
               style={{ width: '100%', display: 'block' }}
-              src={finalSrc}
+              src={videoSrc}
+              onLoadStart={() => setBuffering(true)}
+              onCanPlay={() => setBuffering(false)}
+              onPlaying={() => setBuffering(false)}
               onPause={() => setIsPlaying(false)}
               onPlay={() => setIsPlaying(true)}
-              onCanPlay={() => setStatus('ready')}
               onLoadedMetadata={handleVideoMetadata}
               onError={handleVideoError}
               controls
               crossOrigin="anonymous"
+              preload="auto"
             />
-
-            {/* Flash overlay on capture */}
             {showFlash && (
               <div style={{
                 position: 'absolute', inset: 0,
@@ -430,9 +238,7 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
                 : 'var(--accent-cyan)',
             color: captureSuccess
               ? '#fff'
-              : isDisabled
-                ? 'var(--text-muted)'
-                : 'var(--bg-primary)',
+              : isDisabled ? 'var(--text-muted)' : 'var(--bg-primary)',
             cursor: isDisabled ? 'not-allowed' : 'pointer',
             border: `1px solid ${isDisabled ? 'var(--border-strong)' : 'transparent'}`,
             transition: 'all var(--transition-fast)'
@@ -454,7 +260,7 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
           )}
         </button>
 
-        {status === 'ready' && resolution.w > 0 && (
+        {!buffering && !error && resolution.w > 0 && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: '10px',
             padding: '8px 14px', background: 'var(--bg-surface)',
@@ -468,9 +274,7 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
                 padding: '2px 8px', borderRadius: '999px', fontWeight: 600,
                 background: is4K ? 'var(--success-dim)' : isHD ? 'var(--accent-cyan-dim)' : 'var(--bg-surface-elevated)',
                 color: is4K ? 'var(--success)' : isHD ? 'var(--accent-cyan)' : 'var(--text-muted)'
-              }}>
-                {resLabel}
-              </span>
+              }}>{resLabel}</span>
             )}
             <span style={{ color: 'var(--border-strong)' }}>•</span>
             <span style={{ color: 'var(--success)', fontWeight: 600 }}>Lossless PNG</span>
@@ -479,11 +283,11 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
       </div>
 
       <style>{`
-        @keyframes fadeOut { from { opacity: 0.6; } to { opacity: 0; } }
-        @keyframes indeterminate {
-          0%   { transform: translateX(-100%) scaleX(0.3); }
-          40%  { transform: translateX(0%) scaleX(0.7); }
-          100% { transform: translateX(100%) scaleX(0.3); }
+        @keyframes fadeOut    { from { opacity: 0.6; } to { opacity: 0; } }
+        @keyframes buffering  {
+          0%   { transform: translateX(-100%) scaleX(0.4); }
+          50%  { transform: translateX(30%)   scaleX(0.6); }
+          100% { transform: translateX(120%)  scaleX(0.4); }
         }
       `}</style>
     </div>

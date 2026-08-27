@@ -1,4 +1,4 @@
-import api from './api'
+import api, { BACKEND_URL } from './api'
 
 const videoApi = {
   listVideos: (page = 1) =>
@@ -19,7 +19,15 @@ const videoApi = {
     api.delete(`/videos/${id}/`),
 
   extractFrames: (id, settings = {}) =>
-    api.post(`/videos/${id}/extract_frames/`, settings)
+    api.post(`/videos/${id}/extract_frames/`, settings),
+
+  /**
+   * Trigger backend FFmpeg transcoding for non-native formats (.MTS, .AVI, etc.)
+   * The backend /stream/<id>/ endpoint transcodes on demand and caches the result.
+   * This call is fire-and-forget; poll getVideo() to check when stream_url appears.
+   */
+  triggerTranscode: (id) =>
+    fetch(`${BACKEND_URL}/stream/${id}/`, { method: 'GET' }).catch(() => null),
 }
 
 const imageApi = {

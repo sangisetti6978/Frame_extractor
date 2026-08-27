@@ -37,8 +37,41 @@ class VideoUploadSerializer(serializers.ModelSerializer):
         return url
     
     def get_stream_url(self, obj):
-        url = f'/stream/{obj.id}/'
-        request = self.context.get('request')
-        if request is not None:
-            return request.build_absolute_uri(url)
-        return url
+        """
+        Return the stream URL ONLY when we know a browser-playable version is ready:
+        - For native formats (.mp4, .webm, .ogg, .ogv): always return the stream URL
+          (the backend serves the original file directly).
+        - For non-native formats (.mts, .avi, .mov, etc.): return the stream URL only
+          if the transcoded MP4 file already exists on disk. Otherwise return null so
+          the frontend knows transcoding hasn't completed yet and can poll.
+        """
+        import os
+        from django.conf import settings
+
+        BROWSER_NATIVE = {'.mp4', '.webm', '.ogg', '.ogv'}
+        _, ext = os.path.splitext(obj.video_path or '')
+        ext_lower = ext.lower()
+
+        if ext_lower in BROWSER_NATIVE:
+            # Native format — always serveable via stream endpoint
+            url = f'/stream/{obj.id}/'
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(url)
+            return url
+
+        # Non-native format — check if transcoded MP4 exists
+        original_path = os.path.join(str(settings.MEDIA_ROOT), str(obj.video_path))
+        base, _ = os.path.splitext(original_path)
+        transcoded_path = base + '_transcoded.mp4'
+
+        if os.path.exists(transcoded_path):
+            url = f'/stream/{obj.id}/'
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(url)
+            return url
+
+        # Transcoded file doesn't exist yet — return null so frontend shows spinner
+        return None
+

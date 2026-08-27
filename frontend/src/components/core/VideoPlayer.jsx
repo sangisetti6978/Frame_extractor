@@ -106,7 +106,14 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
 
       const blob = await new Promise((res, rej) =>
         canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob null')), 'image/png')
-      )
+      ).catch(err => {
+        // SecurityError = video is cross-origin without CORS headers on the canvas
+        if (err?.name === 'SecurityError') throw new Error(
+          'Canvas capture blocked: the video stream must include CORS headers. ' +
+          'Ensure CORS_ALLOW_ALL_ORIGINS=True is set on the backend.'
+        )
+        throw err
+      })
 
       await onCaptureFrame({
         blob, timestamp: videoEl.currentTime,

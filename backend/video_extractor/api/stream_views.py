@@ -25,6 +25,19 @@ BROWSER_NATIVE_FORMATS = {'.mp4', '.webm', '.ogg', '.ogv'}
 CHUNK_SIZE = 65536  # 64 KB read chunks for streaming
 
 
+def _add_cors_headers(response):
+    """
+    Explicitly add CORS headers to stream responses so the <video> element
+    can load cross-origin content from Vercel (or any other frontend host).
+    The Django CORS middleware may not run on non-API paths in some configs.
+    """
+    response['Access-Control-Allow-Origin'] = '*'
+    response['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+    response['Access-Control-Allow-Headers'] = 'Range, Authorization'
+    response['Access-Control-Expose-Headers'] = 'Content-Length, Content-Range, Accept-Ranges'
+    return response
+
+
 def _get_transcoded_path(original_path):
     """Return the path where the cached transcoded MP4 lives."""
     base, _ = os.path.splitext(original_path)
@@ -124,7 +137,7 @@ def _live_stream_and_cache(input_path, output_path):
                     pass
 
 
-@api_view(['GET'])
+@api_view(['GET', 'OPTIONS'])
 @permission_classes([])
 def stream_video(request, video_id):
     """
@@ -140,6 +153,11 @@ def stream_video(request, video_id):
     except VideoUpload.DoesNotExist:
         return HttpResponseNotFound('Video not found')
 
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        from django.http import HttpResponse
+        return _add_cors_headers(HttpResponse())
+
     file_path = os.path.join(str(settings.MEDIA_ROOT), str(video.video_path))
 
     if not os.path.exists(file_path):
@@ -154,7 +172,7 @@ def stream_video(request, video_id):
         response = FileResponse(f, content_type='video/mp4')
         response['Content-Disposition'] = f'inline; filename="{video.video_name}"'
         response['Accept-Ranges'] = 'bytes'
-        return response
+        return _add_cors_headers(response)
 
     # ── 2. Cached transcoded file exists — serve instantly ───────────────────
     transcoded_path = _get_transcoded_path(file_path)
@@ -165,7 +183,7 @@ def stream_video(request, video_id):
             f'inline; filename="{os.path.splitext(video.video_name)[0]}.mp4"'
         )
         response['Accept-Ranges'] = 'bytes'
-        return response
+        return _add_cors_headers(response)
 
     # ── 3. Live stream FFmpeg → browser (fragmented MP4) ─────────────────────
     # The browser starts playing within ~2 seconds while FFmpeg is still
@@ -180,4 +198,4 @@ def stream_video(request, video_id):
     # No Content-Length — we don't know the final size while streaming
     response['Cache-Control'] = 'no-cache'
     response['X-Accel-Buffering'] = 'no'  # Disable nginx output buffering
-    return response
+    return _add_cors_headers(response)

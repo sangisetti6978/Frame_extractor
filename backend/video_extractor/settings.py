@@ -145,12 +145,22 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
 }
 
-# CORS
-if os.getenv('CORS_ALLOW_ALL_ORIGINS', 'False') == 'True':
+# CORS — allow all origins by default so the /stream/ endpoint works from any
+# frontend domain (Vercel, Netlify, etc.). Restrict via CORS_ALLOW_ALL_ORIGINS=False
+# + CORS_ALLOWED_ORIGINS in production if you need tighter security.
+if os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True') == 'True':
     CORS_ALLOW_ALL_ORIGINS = True
 else:
-    CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://localhost:5174,http://localhost:3000').split(',')
+    CORS_ALLOWED_ORIGINS = os.getenv(
+        'CORS_ALLOWED_ORIGINS',
+        'http://localhost:5173,http://localhost:5174,http://localhost:3000,'
+        'https://frame-extractor-six.vercel.app'
+    ).split(',')
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    'accept', 'accept-encoding', 'authorization', 'content-type',
+    'dnt', 'origin', 'user-agent', 'x-csrftoken', 'x-requested-with', 'range',
+]
 
 # JWT
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-jwt-secret-key')

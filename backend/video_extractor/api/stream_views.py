@@ -1,201 +1,153 @@
 """
-Video streaming view — serves browser-compatible video instantly.
+Video streaming view.
 
-Strategy:
-  1. Native formats (.mp4/.webm/.ogg): serve file directly — instant.
-  2. Non-native (.MTS/.AVI/.MOV etc.) with cached transcode: serve file — instant.
-  3. Non-native WITHOUT cache: pipe FFmpeg output LIVE to the browser using
-     fragmented MP4 (frag_keyframe+empty_moov). The browser starts playing
-     within 2-3 seconds while FFmpeg is still encoding. The output is also
-     saved to disk so subsequent requests are instant (case 2).
+Strategy (in order of preference):
+  1. Native browser formats (.mp4/.webm): serve file directly — instant.
+  2. Non-native (cached _transcoded.mp4 on disk): serve file — instant.
+  3. Non-native (transcoding in progress — .lock exists): return 202 Accepted.
+  4. Non-native (not started): start transcoding in background, return 202 Accepted.
+
+The frontend polls every 2s when it gets 202, and plays as soon as it gets 200.
+
+Why NOT live FFmpeg pipe streaming:
+  - Gunicorn (WSGI) buffers StreamingHttpResponse — browser gets nothing until
+    FFmpeg finishes encoding the ENTIRE file, negating any latency benefit.
+  - Use gunicorn + gevent workers OR Daphne (ASGI) for real streaming.
+  - For now: fast cache-and-serve is the most reliable approach on Render.
 """
 import os
-import threading
 import subprocess
-from django.http import FileResponse, HttpResponseNotFound, StreamingHttpResponse
+import threading
+from django.http import FileResponse, HttpResponse, HttpResponseNotFound
 from django.conf import settings
 from rest_framework.decorators import api_view, permission_classes
 from video_extractor.core.models import VideoUpload
 from video_extractor.core.utils.ffmpeg_utils import _get_ffmpeg_cmd
 
 
-# Formats browsers can play without any transcoding
+# Formats that every browser can play without transcoding
 BROWSER_NATIVE_FORMATS = {'.mp4', '.webm', '.ogg', '.ogv'}
 
-CHUNK_SIZE = 65536  # 64 KB read chunks for streaming
 
-
-def _add_cors_headers(response):
-    """
-    Explicitly add CORS headers to stream responses so the <video> element
-    can load cross-origin content from Vercel (or any other frontend host).
-    The Django CORS middleware may not run on non-API paths in some configs.
-    """
+def _cors(response):
+    """Set CORS headers so any frontend domain can load the video."""
     response['Access-Control-Allow-Origin'] = '*'
     response['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
     response['Access-Control-Allow-Headers'] = 'Range, Authorization'
-    response['Access-Control-Expose-Headers'] = 'Content-Length, Content-Range, Accept-Ranges'
+    response['Access-Control-Expose-Headers'] = (
+        'Content-Length, Content-Range, Accept-Ranges, X-Transcode-Status'
+    )
     return response
 
 
-def _get_transcoded_path(original_path):
-    """Return the path where the cached transcoded MP4 lives."""
+def _transcoded_path(original_path):
     base, _ = os.path.splitext(original_path)
     return base + '_transcoded.mp4'
 
 
-def _live_stream_and_cache(input_path, output_path):
+def _lock_path(transcoded):
+    return transcoded + '.lock'
+
+
+def _start_transcode_thread(video_id, input_path, output_path):
     """
-    Generator: spawns FFmpeg, reads its stdout in chunks, yields each chunk
-    to the HTTP response, AND simultaneously writes to a temp file on disk.
-
-    On completion, the temp file is atomically renamed to output_path so
-    the next request gets a cached instant-serve FileResponse.
-
-    Uses fragmented MP4 (frag_keyframe+empty_moov) so the browser can begin
-    decoding/playing as soon as the first few KB arrive — no need to wait
-    for the full transcode to finish.
+    Start FFmpeg transcoding in a daemon thread.
+    Writes a .lock file while encoding so callers know it's in progress.
     """
-    tmp_path = output_path + '.part'
-    lock_path = output_path + '.lock'
+    lock = _lock_path(output_path)
+    if os.path.exists(lock) or os.path.exists(output_path):
+        return  # Already running or already done
 
-    ffmpeg_cmd = _get_ffmpeg_cmd()
-    cmd = [
-        ffmpeg_cmd,
-        '-i', input_path,
-        '-vf', 'scale=-2:720',         # 720p — fast encode
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',         # Absolute fastest encode speed
-        '-tune', 'zerolatency',         # Minimize latency for streaming
-        '-crf', '28',                   # Good-enough preview quality
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        # frag_keyframe+empty_moov: write moov atom first so browser can play
-        # without downloading the whole file. Essential for live streaming.
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-        '-f', 'mp4',
-        'pipe:1',                       # Write encoded data to stdout
-    ]
+    def _run():
+        try:
+            open(lock, 'w').close()
+            ffmpeg = _get_ffmpeg_cmd()
+            cmd = [
+                ffmpeg,
+                '-i', input_path,
+                '-vf', 'scale=-2:720',
+                '-c:v', 'libx264',
+                '-preset', 'ultrafast',
+                '-crf', '28',
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-movflags', '+faststart',
+                '-y', output_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if result.returncode == 0:
+                print(f'[Transcode] Done: {output_path}')
+            else:
+                print(f'[Transcode] Error for video {video_id}: {result.stderr[-300:]}')
+                # Clean up incomplete file
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+        except Exception as e:
+            print(f'[Transcode] Failed for video {video_id}: {e}')
+        finally:
+            if os.path.exists(lock):
+                os.remove(lock)
 
-    try:
-        open(lock_path, 'w').close()  # Signal that encoding is in progress
-    except Exception:
-        pass
-
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        bufsize=0,
-    )
-
-    cache_file = None
-    try:
-        cache_file = open(tmp_path, 'wb')
-        while True:
-            chunk = proc.stdout.read(CHUNK_SIZE)
-            if not chunk:
-                break
-            cache_file.write(chunk)
-            yield chunk
-
-        proc.wait()
-        cache_file.close()
-        cache_file = None
-
-        if proc.returncode == 0 and os.path.exists(tmp_path):
-            # Atomic rename: future requests will hit the cached file instantly
-            os.replace(tmp_path, output_path)
-            print(f"[Stream] Cached transcoded file: {output_path}")
-        else:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-
-    except GeneratorExit:
-        # Client disconnected — kill FFmpeg, clean up
-        proc.kill()
-        proc.wait()
-        if cache_file:
-            cache_file.close()
-        for p in (tmp_path,):
-            if os.path.exists(p):
-                try:
-                    os.remove(p)
-                except Exception:
-                    pass
-    except Exception as exc:
-        proc.kill()
-        print(f"[Stream] Error during live stream: {exc}")
-        if cache_file:
-            cache_file.close()
-    finally:
-        for p in (lock_path,):
-            if os.path.exists(p):
-                try:
-                    os.remove(p)
-                except Exception:
-                    pass
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
 
 
 @api_view(['GET', 'OPTIONS'])
 @permission_classes([])
 def stream_video(request, video_id):
     """
-    Serve a video for browser playback.
+    Serve a video for browser playback with proper CORS headers.
 
-    - Native formats: served directly from disk (instant).
-    - Non-native (cached): served from the pre-transcoded MP4 (instant).
-    - Non-native (not cached): live-streamed via FFmpeg pipe with fragmented
-      MP4 — browser starts playing within ~2 seconds, no spinner needed.
+    Returns:
+      200 + video file   — ready to play
+      202 Accepted       — transcoding in progress; Retry-After: 3
+      404                — video/file not found
     """
+    # CORS preflight
+    if request.method == 'OPTIONS':
+        return _cors(HttpResponse(status=200))
+
     try:
         video = VideoUpload.objects.get(id=video_id)
     except VideoUpload.DoesNotExist:
-        return HttpResponseNotFound('Video not found')
-
-    # Handle CORS preflight
-    if request.method == 'OPTIONS':
-        from django.http import HttpResponse
-        return _add_cors_headers(HttpResponse())
+        return _cors(HttpResponseNotFound('Video not found'))
 
     file_path = os.path.join(str(settings.MEDIA_ROOT), str(video.video_path))
-
     if not os.path.exists(file_path):
-        return HttpResponseNotFound('Video file not found on disk')
+        return _cors(HttpResponseNotFound('Video file not found on disk'))
 
     _, ext = os.path.splitext(file_path)
     ext_lower = ext.lower()
 
-    # ── 1. Native format — serve original file directly ──────────────────────
+    # ── 1. Browser-native format: serve directly ─────────────────────────────
     if ext_lower in BROWSER_NATIVE_FORMATS:
-        f = open(file_path, 'rb')
-        response = FileResponse(f, content_type='video/mp4')
-        response['Content-Disposition'] = f'inline; filename="{video.video_name}"'
-        response['Accept-Ranges'] = 'bytes'
-        return _add_cors_headers(response)
+        resp = FileResponse(open(file_path, 'rb'), content_type='video/mp4')
+        resp['Content-Disposition'] = f'inline; filename="{video.video_name}"'
+        resp['Accept-Ranges'] = 'bytes'
+        return _cors(resp)
 
-    # ── 2. Cached transcoded file exists — serve instantly ───────────────────
-    transcoded_path = _get_transcoded_path(file_path)
-    if os.path.exists(transcoded_path):
-        f = open(transcoded_path, 'rb')
-        response = FileResponse(f, content_type='video/mp4')
-        response['Content-Disposition'] = (
+    # ── 2. Cached transcoded file exists: serve instantly ────────────────────
+    out = _transcoded_path(file_path)
+    if os.path.exists(out):
+        resp = FileResponse(open(out, 'rb'), content_type='video/mp4')
+        resp['Content-Disposition'] = (
             f'inline; filename="{os.path.splitext(video.video_name)[0]}.mp4"'
         )
-        response['Accept-Ranges'] = 'bytes'
-        return _add_cors_headers(response)
+        resp['Accept-Ranges'] = 'bytes'
+        resp['X-Transcode-Status'] = 'done'
+        return _cors(resp)
 
-    # ── 3. Live stream FFmpeg → browser (fragmented MP4) ─────────────────────
-    # The browser starts playing within ~2 seconds while FFmpeg is still
-    # encoding. The result is cached to disk for future instant requests.
-    print(f"[Stream] Live streaming transcode: {file_path}")
-    generator = _live_stream_and_cache(file_path, transcoded_path)
+    # ── 3. Transcoding in progress (lock file exists): ask client to retry ───
+    lock = _lock_path(out)
+    if os.path.exists(lock):
+        resp = HttpResponse(status=202)
+        resp['Retry-After'] = '3'
+        resp['X-Transcode-Status'] = 'in-progress'
+        return _cors(resp)
 
-    response = StreamingHttpResponse(generator, content_type='video/mp4')
-    response['Content-Disposition'] = (
-        f'inline; filename="{os.path.splitext(video.video_name)[0]}.mp4"'
-    )
-    # No Content-Length — we don't know the final size while streaming
-    response['Cache-Control'] = 'no-cache'
-    response['X-Accel-Buffering'] = 'no'  # Disable nginx output buffering
-    return _add_cors_headers(response)
+    # ── 4. Not started yet: kick off background transcode, return 202 ────────
+    _start_transcode_thread(video_id, file_path, out)
+    resp = HttpResponse(status=202)
+    resp['Retry-After'] = '3'
+    resp['X-Transcode-Status'] = 'started'
+    return _cors(resp)

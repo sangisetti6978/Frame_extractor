@@ -286,7 +286,102 @@ class VideoViewSet(viewsets.ModelViewSet):
             'completed': completed,
             'failed': failed
         })
-    
+
+    @action(detail=True, methods=['post'])
+    def capture_at(self, request, pk=None):
+        """
+        Extract a single frame from the video at a given timestamp via FFmpeg.
+        Preferred over canvas capture — no crossOrigin / CORS required.
+
+        POST /api/videos/{id}/capture_at/
+        Body: { "timestamp": 3.45 }
+        """
+        try:
+            video = self.get_object()
+            timestamp = float(request.data.get('timestamp', 0))
+
+            # Use transcoded MP4 if available, else original file
+            video_path = os.path.join(settings.MEDIA_ROOT, str(video.video_path))
+            base, _ = os.path.splitext(video_path)
+            transcoded = base + '_transcoded.mp4'
+            source = transcoded if os.path.exists(transcoded) else video_path
+
+            if not os.path.exists(source):
+                return Response({'error': 'Video file not found on server'},
+                                status=status.HTTP_404_NOT_FOUND)
+
+            # Build output path
+            frame_dir = os.path.join(
+                settings.MEDIA_ROOT, 'frames', str(request.user.id), str(video.id)
+            )
+            os.makedirs(frame_dir, exist_ok=True)
+            ts_str = f"{timestamp:.3f}".replace('.', '_')
+            filename = f'frame_{ts_str}_server.png'
+            output_path = os.path.join(frame_dir, filename)
+
+            # Extract frame with FFmpeg
+            import subprocess as sp
+            from video_extractor.core.utils.ffmpeg_utils import _get_ffmpeg_cmd
+            cmd = [
+                _get_ffmpeg_cmd(),
+                '-ss', str(timestamp),
+                '-i', source,
+                '-vframes', '1',
+                '-y', output_path,
+            ]
+            result = sp.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0 or not os.path.exists(output_path):
+                return Response(
+                    {'error': f'Frame extraction failed: {result.stderr[-300:]}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            width, height, file_size = 0, 0, os.path.getsize(output_path)
+            try:
+                from video_extractor.core.utils.opencv_utils import get_image_info
+                info = get_image_info(output_path)
+                width, height = info['width'], info['height']
+            except Exception:
+                pass
+
+            is_blurred, blur_score = False, None
+            try:
+                from video_extractor.core.utils.opencv_utils import detect_blur
+                is_blurred, blur_score = detect_blur(output_path)
+            except Exception:
+                pass
+
+            rel_path = os.path.relpath(output_path, settings.MEDIA_ROOT)
+            captured = CapturedImage.objects.create(
+                user=request.user,
+                config=None,
+                image_path=rel_path,
+                image_url='',
+                source_video=video.video_name,
+                timestamp=timestamp,
+                is_blurred=is_blurred,
+                blur_score=blur_score,
+                is_exported=False,
+                file_size=file_size,
+                width=width,
+                height=height,
+            )
+
+            video.frames_extracted = CapturedImage.objects.filter(
+                user=request.user, source_video=video.video_name
+            ).count()
+            video.save(update_fields=['frames_extracted'])
+
+            from video_extractor.core.serializers.image_serializers import CapturedImageSerializer
+            return Response(
+                CapturedImageSerializer(captured, context={'request': request}).data,
+                status=status.HTTP_201_CREATED,
+            )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
     @action(detail=True, methods=['post'])
     def extract_frames(self, request, pk=None):
         """Extract frames from video"""

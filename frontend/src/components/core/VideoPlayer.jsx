@@ -24,39 +24,87 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
   const [error, setError]               = useState(null)
   const [resolution, setResolution]     = useState({ w: 0, h: 0 })
 
-  // Resolve the playable URL whenever the video changes
-  const videoSrc = (() => {
-    if (!video) return null
-    // Prefer the backend stream URL — it handles native files, cached transcodes,
-    // AND live FFmpeg pipe streaming all in one endpoint.
-    if (video.stream_url) {
-      const url = video.stream_url.startsWith('http')
-        ? video.stream_url
-        : `${BACKEND_URL}${video.stream_url}`
-      // Upgrade http → https on HTTPS pages to avoid mixed-content block
-      return window.location.protocol === 'https:' && url.startsWith('http:')
-        ? url.replace('http:', 'https:')
-        : url
-    }
-    // Fallback: native formats can be served directly
-    const ext = getExtension(video.video_name || '')
-    if (NATIVE_EXTENSIONS.has(ext)) {
-      const raw = video.video_url || `${BACKEND_URL}/media/${video.video_path}`
-      return window.location.protocol === 'https:' && raw.startsWith('http:')
-        ? raw.replace('http:', 'https:')
-        : raw
-    }
-    // Non-native with no stream_url yet — construct stream URL manually
-    return `${BACKEND_URL}/stream/${video.id}/`
-  })()
+  const [resolvingStream, setResolvingStream] = useState(false)
+  const [activeVideoSrc, setActiveVideoSrc] = useState(null)
 
-  // Reset state when the selected video changes
+  // Resolve the playable URL whenever the video changes
   useEffect(() => {
+    if (!video) return
+    let isSubscribed = true
+    let pollTimeout = null
+
+    const checkStream = async () => {
+      // 1. If backend provided stream_url (which is not implemented but checked)
+      if (video.stream_url) {
+        let url = video.stream_url.startsWith('http')
+          ? video.stream_url
+          : `${BACKEND_URL}${video.stream_url}`
+        if (window.location.protocol === 'https:' && url.startsWith('http:')) {
+          url = url.replace('http:', 'https:')
+        }
+        if (isSubscribed) { setActiveVideoSrc(url); setResolvingStream(false) }
+        return
+      }
+
+      // 2. Native formats
+      const ext = getExtension(video.video_name || '')
+      if (NATIVE_EXTENSIONS.has(ext)) {
+        let raw = video.video_url || `${BACKEND_URL}/media/${video.video_path}`
+        if (window.location.protocol === 'https:' && raw.startsWith('http:')) {
+          raw = raw.replace('http:', 'https:')
+        }
+        if (isSubscribed) { setActiveVideoSrc(raw); setResolvingStream(false) }
+        return
+      }
+
+      // 3. Non-native: Poll the backend endpoint
+      const streamUrl = `${BACKEND_URL}/stream/${video.id}/`
+      setResolvingStream(true)
+      
+      try {
+        const response = await fetch(streamUrl, { method: 'HEAD' })
+        if (response.status === 202) {
+          // Transcoding in progress, poll again in 2 seconds
+          if (isSubscribed) {
+            pollTimeout = setTimeout(checkStream, 2000)
+          }
+        } else if (response.ok) {
+          // Ready!
+          if (isSubscribed) {
+            setActiveVideoSrc(streamUrl)
+            setResolvingStream(false)
+          }
+        } else {
+          // Error
+          if (isSubscribed) {
+            setError('Failed to prepare video stream.')
+            setResolvingStream(false)
+            setBuffering(false)
+          }
+        }
+      } catch (err) {
+        if (isSubscribed) {
+          setError('Network error contacting media server.')
+          setResolvingStream(false)
+          setBuffering(false)
+        }
+      }
+    }
+
     setBuffering(true)
     setError(null)
     setResolution({ w: 0, h: 0 })
     setIsPlaying(false)
+    setActiveVideoSrc(null)
+    
+    checkStream()
+
+    return () => {
+      isSubscribed = false
+      if (pollTimeout) clearTimeout(pollTimeout)
+    }
   }, [video?.id])
+
 
   // Clear the capture-success badge after 2.5s
   useEffect(() => {
@@ -196,13 +244,13 @@ export default function VideoPlayer({ video, onCaptureFrame }) {
         )}
 
         {/* The video element — always mounted so the browser starts buffering immediately */}
-        {videoSrc && !error && (
+        {activeVideoSrc && !error && (
           <>
             <video
               key={video.id}          /* remount when video changes */
               ref={videoRef}
               style={{ width: '100%', display: 'block' }}
-              src={videoSrc}
+              src={activeVideoSrc}
               onLoadStart={() => setBuffering(true)}
               onCanPlay={() => setBuffering(false)}
               onPlaying={() => setBuffering(false)}
